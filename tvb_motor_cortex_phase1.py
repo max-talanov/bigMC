@@ -481,11 +481,13 @@ class TVBMotorCortexModel:
         a   = float(m.a[0])
         b   = float(m.b[0])
         d   = float(m.d[0])
-        I_o = float(m.I_o[0])
+        # I_o may be a per-region spatial array (shape n_regions) when stroke
+        # excitability has been applied, or a scalar (shape 1) otherwise.
+        I_o = m.I_o if len(m.I_o) == len(S) else np.full(len(S), float(m.I_o[0]))
         w   = float(m.w[0])
         J_N = float(m.J_N[0])
 
-        x = w * J_N * S + I_o          # effective input [nA]
+        x = w * J_N * S + I_o          # effective input [nA], per-region
         ax_b = a * x - b               # = (a*x - b) [kHz]
         exp_term = 1.0 - np.exp(-d * ax_b)
         # H(x) = (a*x - b) / (1 - exp(-d*(a*x-b)))
