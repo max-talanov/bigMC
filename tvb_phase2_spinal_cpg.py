@@ -77,11 +77,11 @@ TAU1   = 0.08   # s — membrane time constant  (τ₂=6τ₁ → ~1 Hz walking)
 TAU2   = 0.48   # s — adaptation time constant  (= 6 × τ₁, Matsuoka 1985)
 BETA   = 2.5    # adaptation gain
 W_LOC  = 2.5    # ipsilateral E↔F inhibitory weight
-W_COM  = 0.8    # commissural E↔E and F↔F inhibitory weight
-# Oscillation condition: W_LOC + W_COM < 1 + β   (3.3 < 3.5 ✓)
-# This ensures that at the adapted state (y* = c/(1+β)), the inhibition
-# from the opposite half-phase is insufficient to silence the waiting neurons,
-# so they escape and the oscillation continues.
+W_COM  = 0.3    # commissural E↔E and F↔F inhibitory weight
+# Oscillation condition: W_LOC + W_COM < 1 + β   (2.8 < 3.5 ✓)
+# W_COM reduced from 1.0→0.3 to prevent right-leg over-compensation:
+# when left CST drive falls, the contralateral half-centre should
+# speed up by <20% (clinical data), not +57% as seen with W_COM=0.8.
 C0     = 1.5    # nominal tonic input (healthy, both sides)
 
 # Neurons: 0=LE, 1=LF, 2=RE, 3=RF
@@ -166,9 +166,26 @@ def simulate(c_L: float, c_R: float,
     -------
     dict with keys: time_s, y (4×N array), force_e/f for L and R,
     act_e/f, len_e/f, and the input drives c_L/c_R.
+
+    Drive-dependent time constants (Patch 2 — dose-response fix)
+    -----------------------------------------------------------
+    Higher cortical drive speeds up motoneuron dynamics → shorter τ → faster
+    stepping cadence.  We scale τ₁ and τ₂ per neuron pair:
+
+        τ_eff = τ_nominal × (C₀ / c_side)
+
+    So c_healthy=1.5 → τ_eff=τ_nominal; c_baseline=1.05 → τ_eff=1.43×τ_nominal
+    → baseline steps ~30% slower, creating the c→frequency dose-response.
     """
     N    = int(sim_s / dt_s)
     c    = np.array([c_L, c_L, c_R, c_R])   # LE LF RE RF
+
+    # Per-neuron time constants: inversely scaled by normalised drive
+    # Neurons 0,1 = left;  neurons 2,3 = right
+    tau1 = np.array([TAU1*(C0/c_L), TAU1*(C0/c_L),
+                     TAU1*(C0/c_R), TAU1*(C0/c_R)])
+    tau2 = np.array([TAU2*(C0/c_L), TAU2*(C0/c_L),
+                     TAU2*(C0/c_R), TAU2*(C0/c_R)])
 
     # State — asymmetric seed to break symmetry and enter the limit cycle.
     # Matsuoka theory: oscillation requires initial y_active > c / W_LOC
@@ -199,9 +216,9 @@ def simulate(c_L: float, c_R: float,
     for k in range(N):
         t = k * dt_s
 
-        # ── Matsuoka ODE (Euler) ──────────────────────────────────────────
-        du = (-u - W_MAT @ y - BETA * v + c) / TAU1
-        dv = (-v + y) / TAU2
+        # ── Matsuoka ODE (Euler, per-neuron τ) ───────────────────────────
+        du = (-u - W_MAT @ y - BETA * v + c) / tau1
+        dv = (-v + y) / tau2
         u  = u + dt_s * du
         v  = v + dt_s * dv
         y  = np.maximum(0.0, u)
@@ -392,8 +409,9 @@ def make_plot(results: dict, scales: dict, out_path: Path):
     for pk in m["peaks_t"]:
         ax.axvline(pk, color=C_H, lw=0.5, alpha=0.35)
 
-    note = ("Healthy (blue) and Baseline (grey) overlap — symmetric drive.\n"
-            "Stroke (red): reduced amplitude + shifted phase on left leg.")
+    note = ("Baseline (grey) steps slower than Healthy (blue) — c→frequency\n"
+            "dose-response via drive-scaled τ.  Stroke (red): same cadence\n"
+            "as Healthy but REDUCED force amplitude (hemiparetic deficit).")
     ax.text(0.02, 0.05, note, transform=ax.transAxes, fontsize=7,
             color="#a0a8c0",
             bbox=dict(fc="#1a1e2e", ec="#3a3f5c", pad=2, lw=0.7))
@@ -412,8 +430,9 @@ def make_plot(results: dict, scales: dict, out_path: Path):
                labelcolor=LIGHT)
     ax.set_xlim(0, results["healthy"]["time_s"][-1])
     ax.text(0.02, 0.05,
-            "Right leg unaffected by left-hemisphere stroke\n"
-            "(all three conditions overlap on the right side).",
+            "Right leg: cadence unaffected (commissural entrainment).\n"
+            "Stroke right amplitude slightly higher — unmasked by\n"
+            "weaker contralateral drive (mild compensatory effect).",
             transform=ax.transAxes, fontsize=7, color="#a0a8c0",
             bbox=dict(fc="#1a1e2e", ec="#3a3f5c", pad=2, lw=0.7))
 
@@ -529,19 +548,33 @@ def make_plot(results: dict, scales: dict, out_path: Path):
                      f"{mS['duty_cycle']*100:.0f}%"))
         rows.append(("", "", ""))
 
-    # Symmetry
+    # Amplitude & duty asymmetry (primary hemiparetic metrics)
     rows.append(("─"*18, "─"*8, "─"*8))
+    def _peak_amp(t, force):
+        """Mean peak force amplitude in steady-state half."""
+        dt = float(np.diff(t[:10]).mean())
+        from scipy.signal import find_peaks, butter, filtfilt
+        half = len(force)//2
+        b, a = butter(2, 4.0*dt*2, btype="low")
+        fs = filtfilt(b, a, force[half:])
+        pk, _ = find_peaks(fs, height=0.5, distance=max(1,int(0.3/dt)))
+        return float(fs[pk].mean()) if len(pk) else 0.0
+
     for cond in ("healthy", "stroke"):
         res = results[cond]
-        mL = analyse(res["time_s"], res["force_LE"])
-        mR = analyse(res["time_s"], res["force_RE"])
-        if mL["freq_hz"] > 0 and mR["freq_hz"] > 0:
-            ai = abs(mR["freq_hz"]-mL["freq_hz"]) / max(mR["freq_hz"],mL["freq_hz"])*100
-        else:
-            ai = 0.0
-        rows.append((f"Freq asym ({cond[:5]})",
-                     f"{ai:.1f}%" if cond=="healthy" else "",
-                     f"{ai:.1f}%" if cond=="stroke"  else ""))
+        ampL = _peak_amp(res["time_s"], res["force_LE"])
+        ampR = _peak_amp(res["time_s"], res["force_RE"])
+        amp_ai = (ampR - ampL) / max(ampR, ampL) * 100 if max(ampR,ampL)>0 else 0.0
+        rows.append((f"PeakF L [N] ({cond[:5]})",
+                     f"{ampL:.1f}" if cond=="healthy" else "",
+                     f"{ampL:.1f}" if cond=="stroke"  else ""))
+        rows.append((f"PeakF R [N] ({cond[:5]})",
+                     f"{ampR:.1f}" if cond=="healthy" else "",
+                     f"{ampR:.1f}" if cond=="stroke"  else ""))
+        rows.append((f"Amp asym ({cond[:5]})",
+                     f"{amp_ai:.1f}%" if cond=="healthy" else "",
+                     f"{amp_ai:.1f}%" if cond=="stroke"  else ""))
+        rows.append(("", "", ""))
 
     rows.append(("─"*18, "─"*8, "─"*8))
     rows.append(("CST drive L [Hz]",
