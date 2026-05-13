@@ -115,6 +115,33 @@ SMN_LABELS = {"precentral","postcentral","paracentral","superiorfrontal",
 SMN_IDX = [i for i, lbl in enumerate(DK68_LABELS)
            if any(s in lbl.lower() for s in SMN_LABELS)]
 
+# Index of left primary motor cortex (M1_L) — the lesioned region
+M1L_IDX = next(i for i, lbl in enumerate(DK68_LABELS) if lbl == "L_precentral")  # = 22
+
+# ── Canonical resting-state networks (keyword → DK68 label matching) ─────────
+# Used by synthesize_resting_state() to build shared-noise components
+RESTING_NETWORKS = {
+    "SMN": {"precentral","postcentral","paracentral","superiorfrontal",
+            "supramarginal","superiorparietal"},
+    "DMN": {"precuneus","posteriorcingulate","medialorbitofrontal",
+            "middletemporal","isthmuscingulate","rostralanteriorcingulate",
+            "rostralmiddlefrontal"},
+    "VIS": {"pericalcarine","lingual","cuneus","lateraloccipital"},
+    "FPN": {"caudalmiddlefrontal","inferiorparietal","parsopercularis",
+            "parstriangularis","parsorbitalis"},
+}
+
+def _build_network_membership():
+    """Map each DK68 region index to its resting-state network (or None)."""
+    m = [None] * 68
+    for net, kws in RESTING_NETWORKS.items():
+        for i, lbl in enumerate(DK68_LABELS):
+            if any(kw in lbl.lower() for kw in kws):
+                m[i] = net
+    return m
+
+NETWORK_MEMBERSHIP = _build_network_membership()
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  PART A — BALLOON-WINDKESSEL BOLD FORWARD MODEL
 # ══════════════════════════════════════════════════════════════════════════════
@@ -190,6 +217,122 @@ def balloon_windkessel(neural_hz: np.ndarray, dt_s: float) -> np.ndarray:
     bold_pct = bold * 100.0
     bold_pct -= bold_pct[:, 200:].mean(axis=1, keepdims=True)  # skip transient
     return bold_pct
+
+
+def synthesize_resting_state(fr_mean: np.ndarray,
+                              is_stroke: bool = False,
+                              duration_s: float = 300.0,
+                              dt_s: float = 0.05,
+                              sigma_frac: float = 0.15,
+                              tau_ou: float = 1.5,
+                              alpha_net: float = 0.60,
+                              seed: int = 42) -> tuple:
+    """
+    Generate synthetic resting-state firing rates using an Ornstein-Uhlenbeck
+    (OU) process with network-structured spatial correlation — mimicking the
+    low-frequency (<0.1 Hz) BOLD fluctuations observed in resting-state fMRI.
+
+    Architecture
+    ------------
+    For each region i in network N:
+        fr_i(t) = fr_mean_i + σ_i · [α · η_N(t)  +  √(1−α²) · η_priv_i(t)]
+
+    η_N, η_priv_i  — independent zero-mean, unit-variance OU processes
+                     with time constant tau_ou ≈ 1.5 s (slow fluctuations)
+    σ_i            — region noise amplitude = sigma_frac × fr_mean_i
+    α              — network coupling coefficient
+
+    Within-network FC from theory:
+        FC_ij = Cov(x_i, x_j) / √(Var_i · Var_j) = α²  (i,j in same net)
+    With α = 0.60  →  expected within-SMN FC ≈ 0.36  (matches literature)
+
+    Stroke perturbation (Carter et al. 2010 model)
+    -----------------------------------------------
+    M1_L (L_precentral, index M1L_IDX) is disconnected from the SMN:
+        α_M1L = 0  →  FC(M1_L, other SMN) → 0
+
+    Parameters
+    ----------
+    fr_mean   : (n_regions,) mean firing rates [Hz] from Phase 1
+    is_stroke : if True, disconnect M1_L from its network
+    duration_s: resting-state duration [s]
+    dt_s      : OU / BOLD integration step [s]
+    sigma_frac: noise SD as fraction of mean firing rate
+    tau_ou    : OU autocorrelation time constant [s]
+    alpha_net : shared-network coupling coefficient  (0 = private, 1 = fully shared)
+    seed      : random seed for reproducibility
+
+    Returns
+    -------
+    fr_synth : (n_regions, n_time)  synthetic firing rates [Hz]
+    t_synth  : (n_time,)            time vector [s]
+    """
+    n_reg = len(fr_mean)
+    N     = int(duration_s / dt_s)
+    t     = np.arange(N) * dt_s
+    rng   = np.random.default_rng(seed)
+
+    # OU Euler-Maruyama: x[k+1] = decay·x[k] + noise_amp·ε
+    decay     = np.exp(-dt_s / tau_ou)
+    noise_amp = np.sqrt(1.0 - decay ** 2)   # keeps unit variance
+
+    # ── Shared OU noise per resting-state network (vectorised over networks) ──
+    net_list   = list(RESTING_NETWORKS.keys())
+    n_nets     = len(net_list)
+    eps_net    = rng.standard_normal((n_nets, N))
+    eta_net    = np.zeros((n_nets, N))
+    for k in range(1, N):
+        eta_net[:, k] = decay * eta_net[:, k-1] + noise_amp * eps_net[:, k]
+
+    # ── Private OU noise per region (vectorised over regions) ────────────────
+    eps_priv  = rng.standard_normal((n_reg, N))
+    eta_priv  = np.zeros((n_reg, N))
+    for k in range(1, N):
+        eta_priv[:, k] = decay * eta_priv[:, k-1] + noise_amp * eps_priv[:, k]
+
+    # ── Combine shared + private to produce firing-rate timeseries ────────────
+    net_lookup = {net: j for j, net in enumerate(net_list)}
+    fr_synth   = np.zeros((n_reg, N))
+
+    for i in range(n_reg):
+        net = NETWORK_MEMBERSHIP[i]
+        # Stroke: M1_L disconnected from its network
+        a   = 0.0 if (is_stroke and i == M1L_IDX) else alpha_net
+        sig = sigma_frac * max(float(fr_mean[i]), 0.1)
+
+        if net is not None:
+            j        = net_lookup[net]
+            combined = a * eta_net[j] + np.sqrt(max(1.0 - a**2, 0.0)) * eta_priv[i]
+        else:
+            combined = eta_priv[i]          # unassigned region: private only
+
+        fr_synth[i] = np.clip(fr_mean[i] + sig * combined, 0.01, None)
+
+    return fr_synth, t
+
+
+def functional_connectivity_rs(bold_pct: np.ndarray,
+                                t_start_s: float = 30.0,
+                                dt_s: float = 0.05,
+                                TR: float = 2.0) -> tuple:
+    """
+    Pearson-correlation FC matrix from resting-state BOLD.
+
+    Discards the first t_start_s seconds (haemodynamic transient) then
+    subsamples at TR to get realistic fMRI time-series length.
+
+    Returns
+    -------
+    fc     : (n_regions, n_regions)  Pearson correlation matrix, diagonal=0
+    n_TRs  : int  number of time points used (for reporting)
+    """
+    skip    = int(t_start_s / dt_s)
+    tr_pts  = max(1, int(TR / dt_s))
+    bold_ss = bold_pct[:, skip::tr_pts]   # (n_reg, n_TRs)
+    n_TRs   = bold_ss.shape[1]
+    fc      = np.corrcoef(bold_ss)
+    np.fill_diagonal(fc, 0.0)
+    return fc, n_TRs
 
 
 def load_firing_rates(h5_path: Path):
@@ -351,7 +494,8 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
                 fc_h: np.ndarray,   fc_s: np.ndarray,
                 t: np.ndarray,
                 nibs_results: dict, weeks: np.ndarray,
-                scales: dict, out_path: Path):
+                scales: dict, out_path: Path,
+                n_TRs: int = 0):
 
     DARK  = "#0e1117"; LIGHT = "#e0e0e0"; ACCENT = "#f9a825"
     C_H   = "#4bc8ff"; C_S   = "#ff4b4b"
@@ -416,44 +560,48 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
                  transform=ax_pipe.transAxes,
                  bbox=dict(fc="#1a1e2e", ec=ACCENT, pad=2.5, lw=0.8))
 
-    # ── BOLD time-series: SMN regions ─────────────────────────────────────────
-    # Subsample to ~10 Hz for display
-    tr_disp = int(0.1 / (t[1]-t[0]))
-    t_disp  = t[::tr_disp]
-    # SMN mean
-    smn_h = bold_h[SMN_IDX, :].mean(0)[::tr_disp]
-    smn_s = bold_s[SMN_IDX, :].mean(0)[::tr_disp]
+    # ── BOLD time-series: SMN regions (stochastic resting-state, show 60 s) ──
+    dt_bold  = float(t[1] - t[0])
+    tr_disp  = max(1, int(0.5 / dt_bold))   # display at ~0.5 s resolution
+    t_lim    = min(60.0, t[-1])              # show at most first 60 s
+    d_mask   = t <= t_lim
+    t_disp   = t[d_mask][::tr_disp]
+
     # Left-SMN (ipsilesional) and Right-SMN (contralesional)
     l_smn = [i for i in SMN_IDX if i < 34]
     r_smn = [i for i in SMN_IDX if i >= 34]
 
+    n_TRs_str = f"  │  {n_TRs} TRs" if n_TRs else ""
     for ax, bold_mat, label, col in [
-            (ax_bh, bold_h, "BOLD  Healthy", C_H),
-            (ax_bs, bold_s, "BOLD  Stroke",  C_S)]:
-        l_bold = bold_mat[l_smn, :].mean(0)[::tr_disp]
-        r_bold = bold_mat[r_smn, :].mean(0)[::tr_disp]
+            (ax_bh, bold_h,
+             f"BOLD Healthy  (OU resting-state, {t[-1]:.0f} s{n_TRs_str})", C_H),
+            (ax_bs, bold_s,
+             f"BOLD Stroke   (OU resting-state, {t[-1]:.0f} s)", C_S)]:
+        l_bold = bold_mat[l_smn, :][:, d_mask].mean(0)[::tr_disp]
+        r_bold = bold_mat[r_smn, :][:, d_mask].mean(0)[::tr_disp]
         ax.plot(t_disp, l_bold, color=col,        lw=1.2, label="Left SMN")
         ax.plot(t_disp, r_bold, color=col, lw=1.2, ls="--", alpha=0.65,
                 label="Right SMN")
         ax.axhline(0, color=LIGHT, lw=0.5, ls=":", alpha=0.4)
         ax.set_xlabel("Time [s]", fontsize=8)
         ax.set_ylabel("BOLD  [% signal]", fontsize=8)
-        ax.set_title(label, fontsize=9, color=LIGHT, pad=4)
+        ax.set_title(label, fontsize=8, color=LIGHT, pad=4)
         ax.legend(fontsize=6.5, facecolor="#1a1e2e", edgecolor="#3a3f5c",
                   labelcolor=LIGHT)
         ax.set_xlim(t_disp[0], t_disp[-1])
 
     # Annotation on stroke panel
     ax_bs.text(0.02, 0.05,
-               "Left SMN reduced (ipsilesional).\n"
-               "Right SMN preserved — Carter 2010 ✓",
+               "M1_L disconnected from SMN network\n"
+               "(α=0)  →  reduced ipsilesional FC\n"
+               "Carter et al. 2010 ✓",
                transform=ax_bs.transAxes, fontsize=6.5, color="#a0a8c0",
                bbox=dict(fc="#1a1e2e", ec="#3a3f5c", pad=2, lw=0.7))
 
     # ── FC matrices ───────────────────────────────────────────────────────────
     vmax = 0.6
-    for ax, fc, title in [(ax_fch, fc_h, "FC  Healthy"),
-                           (ax_fcs, fc_s, "FC  Stroke")]:
+    for ax, fc, title in [(ax_fch, fc_h, "FC  Healthy  (stochastic RS)"),
+                           (ax_fcs, fc_s, "FC  Stroke   (stochastic RS)")]:
         im = ax.imshow(fc, cmap="RdBu_r", vmin=-vmax, vmax=vmax,
                        aspect="auto", interpolation="nearest")
         ax.set_title(title, fontsize=9, color=LIGHT, pad=4)
@@ -495,23 +643,50 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
                   bbox=dict(fc="#1a1e2e", ec=ACCENT, pad=3, lw=0.8),
                   va="bottom")
 
-    # ── Mean BOLD: healthy vs stroke, L vs R SMN ──────────────────────────────
+    # ── Within-SMN FC per region: healthy vs stroke bar chart ─────────────────
+    # Mean FC of each SMN region with all OTHER SMN regions
     ax = ax_smn
-    tr_sm = int(0.5 / (t[1]-t[0]))
-    t_sm  = t[::tr_sm]
-    for side_idx, side_lbl, ls in [(l_smn,"L SMN","-"),(r_smn,"R SMN","--")]:
-        bh = bold_h[side_idx,:].mean(0)[::tr_sm]
-        bs = bold_s[side_idx,:].mean(0)[::tr_sm]
-        ax.plot(t_sm, bh, color=C_H, lw=1.4, ls=ls, label=f"Healthy {side_lbl}")
-        ax.plot(t_sm, bs, color=C_S, lw=1.4, ls=ls, label=f"Stroke  {side_lbl}")
+    fc_h_smn_row = np.array([
+        np.nanmean([fc_h[i, j] for j in SMN_IDX if j != i])
+        for i in SMN_IDX
+    ])
+    fc_s_smn_row = np.array([
+        np.nanmean([fc_s[i, j] for j in SMN_IDX if j != i])
+        for i in SMN_IDX
+    ])
+    smn_short_lbl = [DK68_LABELS[i].split("_", 1)[1][:10] for i in SMN_IDX]
+    x_pos = np.arange(len(SMN_IDX))
+    bw = 0.38
+    ax.bar(x_pos - bw/2, fc_h_smn_row, width=bw, color=C_H,
+           alpha=0.82, label="Healthy")
+    ax.bar(x_pos + bw/2, fc_s_smn_row, width=bw, color=C_S,
+           alpha=0.82, label="Stroke")
+    # Highlight M1_L bar with gold border
+    m1l_pos = SMN_IDX.index(M1L_IDX) if M1L_IDX in SMN_IDX else None
+    if m1l_pos is not None:
+        ax.bar(m1l_pos + bw/2, fc_s_smn_row[m1l_pos], width=bw,
+               color=C_S, edgecolor=ACCENT, linewidth=2.0, alpha=0.95,
+               label="M1_L (stroke)")
+        ax.annotate("M1_L\ndisconnected",
+                    xy=(m1l_pos + bw/2, fc_s_smn_row[m1l_pos]),
+                    xytext=(m1l_pos + bw/2 + 0.8,
+                            max(fc_h_smn_row)*0.55),
+                    fontsize=6.5, color=ACCENT,
+                    arrowprops=dict(arrowstyle="->", color=ACCENT, lw=0.9))
+    # Theoretical FC line
+    alpha_net_val = 0.60
+    ax.axhline(alpha_net_val**2, color="#88aaff", lw=1.0, ls="--",
+               alpha=0.7, label=f"Theory: α²={alpha_net_val**2:.2f}")
     ax.axhline(0, color=LIGHT, lw=0.5, ls=":", alpha=0.4)
-    ax.set_xlabel("Time [s]", fontsize=8)
-    ax.set_ylabel("Mean BOLD  [% signal]", fontsize=8)
-    ax.set_title("Sensorimotor Network BOLD\nHealthy vs Stroke (L/R)",
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(smn_short_lbl, rotation=45, ha="right", fontsize=6)
+    ax.set_ylabel("Mean within-SMN FC", fontsize=8)
+    ax.set_title("Within-SMN FC by Region\n"
+                 "Healthy vs Stroke  │  M1_L α=0 (disconnected)",
                  fontsize=9, color=LIGHT, pad=4)
     ax.legend(fontsize=6.5, facecolor="#1a1e2e", edgecolor="#3a3f5c",
-              labelcolor=LIGHT, ncol=2)
-    ax.set_xlim(t_sm[0], t_sm[-1])
+              labelcolor=LIGHT)
+    ax.set_xlim(-0.7, len(SMN_IDX)-0.3)
 
     # ── NIBS AmpAI recovery ───────────────────────────────────────────────────
     ax = ax_nibs
@@ -590,9 +765,9 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
 
     fig.suptitle(
         "Phase 4: Synthetic BOLD fMRI  +  NIBS Rehabilitation\n"
-        "TVB Stroke → Balloon-Windkessel BOLD → FC Disruption  │  "
+        "TVB Stroke → Balloon-Windkessel BOLD (OU resting-state, 300 s) → FC Disruption  │  "
         "tDCS Protocols → Accelerated Gait Recovery",
-        fontsize=12, fontweight="bold", color=LIGHT, y=0.975)
+        fontsize=11, fontweight="bold", color=LIGHT, y=0.975)
 
     plt.savefig(out_path, dpi=150, bbox_inches="tight",
                 facecolor=fig.get_facecolor())
@@ -630,45 +805,70 @@ def main():
     p2 = importlib.util.module_from_spec(spec); spec.loader.exec_module(p2)
     scales = p2.load_phase1_scales()
 
-    # ── B: Balloon-Windkessel BOLD ─────────────────────────────────────────────
-    print(f"\n[2/5] Running Balloon-Windkessel model "
+    # ── B: Stochastic resting-state simulation (OU noise + network structure) ──
+    DT_RS = 0.05    # s — OU / BOLD integration step for resting-state
+    DUR_RS = 300.0  # s — duration of synthetic resting-state
+    ALPHA_NET = 0.60
+    print(f"\n[2/5] Synthesising stochastic resting-state  "
+          f"({DUR_RS:.0f} s, dt={DT_RS*1000:.0f} ms, OU τ=1.5 s)...")
+    print(f"  Model: fr_i(t) = μ_i + σ_i·[α·η_network + √(1−α²)·η_private]")
+    print(f"  α_network = {ALPHA_NET:.2f}  →  theory within-net FC ≈ {ALPHA_NET**2:.2f}")
+    print(f"  Stroke: M1_L (idx {M1L_IDX}, {DK68_LABELS[M1L_IDX]}) α → 0 (disconnected)")
+
+    fr_rs_h, t_rs = synthesize_resting_state(
+        fr_h.mean(axis=1), is_stroke=False,
+        duration_s=DUR_RS, dt_s=DT_RS, alpha_net=ALPHA_NET)
+    fr_rs_s, _    = synthesize_resting_state(
+        fr_s.mean(axis=1), is_stroke=True,
+        duration_s=DUR_RS, dt_s=DT_RS, alpha_net=ALPHA_NET)
+    print(f"  Generated {fr_rs_h.shape[1]} time points  "
+          f"({fr_rs_h.shape[1]*DT_RS:.0f} s) per condition")
+
+    print(f"  Running Balloon-Windkessel on stochastic signal "
           f"(Friston 2000, κ={HRF_KAPPA}, γ={HRF_GAMMA}, "
-          f"τ={HRF_TAU}, α={HRF_ALPHA}, E₀={HRF_E0})...")
-    bold_h = balloon_windkessel(fr_h, dt_s)
-    bold_s = balloon_windkessel(fr_s, dt_s)
+          f"τ={HRF_TAU}, α={HRF_ALPHA})...")
+    bold_h = balloon_windkessel(fr_rs_h, DT_RS)
+    bold_s = balloon_windkessel(fr_rs_s, DT_RS)
+    t      = t_rs
 
     smn_h = bold_h[SMN_IDX, :].mean(0)
     smn_s = bold_s[SMN_IDX, :].mean(0)
-    print(f"  Healthy SMN BOLD  mean={smn_h.mean():.4f}%  "
-          f"std={smn_h.std():.4f}%  peak={smn_h.max():.4f}%")
-    print(f"  Stroke  SMN BOLD  mean={smn_s.mean():.4f}%  "
-          f"std={smn_s.std():.4f}%  peak={smn_s.max():.4f}%")
+    print(f"  Healthy SMN BOLD  std={smn_h.std():.4f}%  "
+          f"peak-to-peak={float(smn_h.max()-smn_h.min()):.4f}%")
+    print(f"  Stroke  SMN BOLD  std={smn_s.std():.4f}%  "
+          f"peak-to-peak={float(smn_s.max()-smn_s.min()):.4f}%")
 
-    # ── C: Functional connectivity ─────────────────────────────────────────────
-    print("\n[3/5] Computing functional connectivity matrices (TR=2 s)...")
-    t_start = min(1.0, t[-1] * 0.10)   # skip first 10% or 1 s, whichever smaller
-    fc_h = functional_connectivity(bold_h, t_start_s=t_start, dt_s=dt_s)
-    fc_s = functional_connectivity(bold_s, t_start_s=t_start, dt_s=dt_s)
+    # ── C: Functional connectivity from stochastic BOLD ───────────────────────
+    print("\n[3/5] Computing functional connectivity (stochastic RS, TR=2 s)...")
+    fc_h, n_TRs_h = functional_connectivity_rs(bold_h, dt_s=DT_RS)
+    fc_s, n_TRs_s = functional_connectivity_rs(bold_s, dt_s=DT_RS)
+    print(f"  TRs used:  healthy={n_TRs_h}   stroke={n_TRs_s}")
 
     smn_m = np.ix_(SMN_IDX, SMN_IDX)
     fch_smn = fc_h[smn_m].copy(); np.fill_diagonal(fch_smn, np.nan)
     fcs_smn = fc_s[smn_m].copy(); np.fill_diagonal(fcs_smn, np.nan)
     print(f"  Within-SMN FC:  Healthy={np.nanmean(fch_smn):.3f}  "
           f"Stroke={np.nanmean(fcs_smn):.3f}  "
-          f"Δ={np.nanmean(fch_smn)-np.nanmean(fcs_smn):.3f}")
+          f"Δ={np.nanmean(fch_smn)-np.nanmean(fcs_smn):.3f}  "
+          f"(theory healthy≈{ALPHA_NET**2:.2f})")
+    # M1_L specific
+    m1l_fc_h = np.nanmean([fc_h[M1L_IDX, j] for j in SMN_IDX if j != M1L_IDX])
+    m1l_fc_s = np.nanmean([fc_s[M1L_IDX, j] for j in SMN_IDX if j != M1L_IDX])
+    print(f"  M1_L mean FC with SMN:  Healthy={m1l_fc_h:.3f}  "
+          f"Stroke={m1l_fc_s:.3f}  (Carter 2010: ipsilesional↓)")
 
     # Top-5 most disrupted connections
     fc_diff = fc_h - fc_s
     flat = np.abs(fc_diff).flatten()
     top5 = np.argsort(flat)[::-1][:5]
-    print("  Top-5 most disrupted connections:")
+    print("  Top-5 most disrupted connections (ΔFC = healthy − stroke):")
     for idx in top5:
         ri, rj = divmod(int(idx), 68)
         print(f"    {DK68_LABELS[ri]:35s} ↔ {DK68_LABELS[rj]:35s}  "
               f"ΔFC={fc_diff[ri,rj]:+.3f}")
 
-    path_bh = save_bold_h5("healthy", bold_h, fc_h, t)
-    path_bs = save_bold_h5("stroke",  bold_s, fc_s, t)
+    path_bh = save_bold_h5("healthy_rs", bold_h, fc_h, t)
+    path_bs = save_bold_h5("stroke_rs",  bold_s, fc_s, t)
 
     # ── D: NIBS protocols ─────────────────────────────────────────────────────
     weeks = np.arange(0, 13, dtype=float)
@@ -687,7 +887,8 @@ def main():
     print("\n[5/5] Generating combined figure...")
     fig_path = OUTPUT_DIR / "phase4_bold_nibs.png"
     make_figure(bold_h, bold_s, fc_h, fc_s, t,
-                nibs_results, weeks, scales, fig_path)
+                nibs_results, weeks, scales, fig_path,
+                n_TRs=n_TRs_h)
 
     print(f"\n{'='*62}")
     print("  Phase 4 complete.")
