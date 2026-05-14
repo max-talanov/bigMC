@@ -516,19 +516,21 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
         ax.yaxis.label.set_color(LIGHT)
         return ax
 
-    ax_pipe  = mk(0, 0, 1, 4)   # row 0: full-width pipeline
-    ax_bh    = mk(1, 0, 1, 1)   # BOLD healthy SMN
-    ax_bs    = mk(1, 1, 1, 1)   # BOLD stroke  SMN
-    ax_fch   = mk(1, 2, 1, 1)   # FC healthy
-    ax_fcs   = mk(1, 3, 1, 1)   # FC stroke
-    ax_fcdif = mk(2, 0, 1, 2)   # FC difference healthy−stroke
-    ax_smn   = mk(2, 2, 1, 2)   # SMN mean BOLD comparison
-    ax_nibs  = mk(3, 0, 1, 2)   # NIBS AmpAI recovery
-    ax_nibsF = mk(3, 2, 1, 1)   # NIBS absolute force L
-    ax_tbl   = mk(3, 3, 1, 1)   # milestone table
+    ax_pipe  = mk(0, 0, 1, 4)   # row 0: full-width pipeline (A)
+    ax_bh    = mk(1, 0, 1, 1)   # BOLD healthy SMN (B)
+    ax_bs    = mk(1, 1, 1, 1)   # BOLD stroke  SMN (C)
+    ax_fch   = mk(1, 2, 1, 1)   # FC healthy (D)
+    ax_fcs   = mk(1, 3, 1, 1)   # FC stroke (E)
+    ax_fcdif = mk(2, 0, 1, 2)   # FC difference healthy−stroke (F)
+    ax_smn   = mk(2, 2, 1, 2)   # SMN within-FC by region (G)
+    ax_nibs  = mk(3, 0, 1, 2)   # NIBS AmpAI recovery (H)
+    ax_nibsF = mk(3, 2, 1, 1)   # NIBS absolute force L (I)
+    ax_tbl   = mk(3, 3, 1, 1)   # milestone table (J)
 
     # ── Pipeline banner ───────────────────────────────────────────────────────
     ax_pipe.set_xlim(0,1); ax_pipe.set_ylim(0,1); ax_pipe.axis("off")
+    ax_pipe.text(-0.02, 1.02, "A", fontsize=16, fontweight="bold",
+                 color=ACCENT, transform=ax_pipe.transAxes)
     bxs = [
         (0.06, "Phase 1\nTVB firing\nrates",          "#2e3b6e"),
         (0.20, "Balloon-\nWindkessel\n(Friston 2000)", "#1a4a2e"),
@@ -572,11 +574,11 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
     r_smn = [i for i in SMN_IDX if i >= 34]
 
     n_TRs_str = f"  │  {n_TRs} TRs" if n_TRs else ""
-    for ax, bold_mat, label, col in [
+    for ax, bold_mat, label, col, letter in [
             (ax_bh, bold_h,
-             f"BOLD Healthy  (OU resting-state, {t[-1]:.0f} s{n_TRs_str})", C_H),
+             f"BOLD Healthy  (OU resting-state, {t[-1]:.0f} s{n_TRs_str})", C_H, "B"),
             (ax_bs, bold_s,
-             f"BOLD Stroke   (OU resting-state, {t[-1]:.0f} s)", C_S)]:
+             f"BOLD Stroke   (OU resting-state, {t[-1]:.0f} s)", C_S, "C")]:
         l_bold = bold_mat[l_smn, :][:, d_mask].mean(0)[::tr_disp]
         r_bold = bold_mat[r_smn, :][:, d_mask].mean(0)[::tr_disp]
         ax.plot(t_disp, l_bold, color=col,        lw=1.2, label="Left SMN")
@@ -586,6 +588,8 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
         ax.set_xlabel("Time [s]", fontsize=8)
         ax.set_ylabel("BOLD  [% signal]", fontsize=8)
         ax.set_title(label, fontsize=8, color=LIGHT, pad=4)
+        ax.text(-0.18, 1.05, letter, fontsize=12, fontweight="bold",
+                color=ACCENT, transform=ax.transAxes)
         ax.legend(fontsize=6.5, facecolor="#1a1e2e", edgecolor="#3a3f5c",
                   labelcolor=LIGHT)
         ax.set_xlim(t_disp[0], t_disp[-1])
@@ -600,11 +604,13 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
 
     # ── FC matrices ───────────────────────────────────────────────────────────
     vmax = 0.6
-    for ax, fc, title in [(ax_fch, fc_h, "FC  Healthy  (stochastic RS)"),
-                           (ax_fcs, fc_s, "FC  Stroke   (stochastic RS)")]:
+    for ax, fc, title, letter in [(ax_fch, fc_h, "FC  Healthy  (stochastic RS)", "D"),
+                                    (ax_fcs, fc_s, "FC  Stroke   (stochastic RS)", "E")]:
         im = ax.imshow(fc, cmap="RdBu_r", vmin=-vmax, vmax=vmax,
                        aspect="auto", interpolation="nearest")
         ax.set_title(title, fontsize=9, color=LIGHT, pad=4)
+        ax.text(-0.18, 1.05, letter, fontsize=12, fontweight="bold",
+                color=ACCENT, transform=ax.transAxes)
         ax.set_xlabel("Region index", fontsize=7.5)
         ax.set_ylabel("Region index", fontsize=7.5)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04).ax.tick_params(
@@ -623,6 +629,8 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
     ax_fcdif.set_title("FC Difference  (Healthy − Stroke)\nBlue = reduced by stroke  "
                         "│  Red = increased",
                         fontsize=9, color=LIGHT, pad=4)
+    ax_fcdif.text(-0.05, 1.05, "F", fontsize=12, fontweight="bold",
+                  color=ACCENT, transform=ax_fcdif.transAxes)
     ax_fcdif.set_xlabel("Region index", fontsize=7.5)
     ax_fcdif.set_ylabel("Region index", fontsize=7.5)
     cbar2 = plt.colorbar(im2, ax=ax_fcdif, fraction=0.046, pad=0.04)
@@ -684,6 +692,8 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
     ax.set_title("Within-SMN FC by Region\n"
                  "Healthy vs Stroke  │  M1_L α=0 (disconnected)",
                  fontsize=9, color=LIGHT, pad=4)
+    ax.text(-0.12, 1.05, "G", fontsize=12, fontweight="bold",
+            color=ACCENT, transform=ax.transAxes)
     ax.legend(fontsize=6.5, facecolor="#1a1e2e", edgecolor="#3a3f5c",
               labelcolor=LIGHT)
     ax.set_xlim(-0.7, len(SMN_IDX)-0.3)
@@ -714,6 +724,8 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
     ax.set_title("NIBS Protocols: Gait Asymmetry Recovery\n"
                  "(Literature: Khedr 2005, Hao 2013 — ~2 wk earlier w/ NIBS)",
                  fontsize=9, color=LIGHT, pad=4)
+    ax.text(-0.05, 1.05, "H", fontsize=12, fontweight="bold",
+            color=ACCENT, transform=ax.transAxes)
     ax.legend(fontsize=7, facecolor="#1a1e2e", edgecolor="#3a3f5c",
               labelcolor=LIGHT, loc="upper right")
     ax.set_xlim(weeks[0], weeks[-1])
@@ -730,6 +742,8 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
     ax.set_ylabel("Left Peak Force [N]", fontsize=8)
     ax.set_title("Left Leg Force Recovery\nby Protocol", fontsize=9,
                  color=LIGHT, pad=4)
+    ax.text(-0.18, 1.05, "I", fontsize=12, fontweight="bold",
+            color=ACCENT, transform=ax.transAxes)
     ax.legend(fontsize=6, facecolor="#1a1e2e", edgecolor="#3a3f5c",
               labelcolor=LIGHT)
     ax.set_xlim(weeks[0], weeks[-1])
@@ -739,6 +753,8 @@ def make_figure(bold_h: np.ndarray, bold_s: np.ndarray,
     ax = ax_tbl; ax.axis("off")
     ax.set_title("Near-normal milestone\n(AmpAI < 10%)", fontsize=9,
                  color=LIGHT, pad=4)
+    ax.text(-0.18, 1.05, "J", fontsize=12, fontweight="bold",
+            color=ACCENT, transform=ax.transAxes)
     col_x = [0.02, 0.65]; row_y = 0.92; dy = 0.11
     ax.text(col_x[0], row_y, "Protocol", color=LIGHT,
             fontsize=7.5, fontweight="bold", transform=ax.transAxes, va="top")
