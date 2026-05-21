@@ -1,0 +1,36 @@
+# Core numerical and scientific computing
+numpy>=2.0.0
+scipy>=1.17.0
+matplotlib>=3.10.0
+
+# Data I/O
+h5py>=3.16.0
+pandas>=3.0.0
+
+# The Virtual Brain framework and components
+tvb-framework>=2.10.0
+tvb-library>=2.10.0
+tvb-data>=3.0.0
+tvb-gdist>=2.9.2
+tvb-storage>=2.10.0
+
+# Neuroimaging tools
+nibabel>=5.4.0
+nilearn>=0.13.0
+
+# Graph analysis
+networkx>=3.6.0
+
+# Scientific computing utilities
+scikit-learn>=1.8.0
+scikit-image>=0.26.0
+pandas>=3.0.0
+
+# Performance
+numba>=0.65.0
+numexpr>=2.14.0
+Cython>=3.2.0
+
+# Development and utilities
+IPython>=9.13.0
+Jupyter>=1.0.0
