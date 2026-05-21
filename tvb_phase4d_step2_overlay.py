@@ -261,12 +261,12 @@ def make_unified_comparison_figure():
         proto_metrics[proto_name] = extract_metrics(res)
 
     # ── Build figure ──────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(22, 16))
+    fig = plt.figure(figsize=(22, 13))
     fig.patch.set_facecolor(DARK)
 
-    gs = gridspec.GridSpec(4, 3, figure=fig,
-                          left=0.05, right=0.97, top=0.93, bottom=0.04,
-                          hspace=0.50, wspace=0.30,
+    gs = gridspec.GridSpec(3, 3, figure=fig,
+                          left=0.05, right=0.97, top=0.93, bottom=0.05,
+                          hspace=0.45, wspace=0.30,
                           width_ratios=[2.5, 2.5, 1.5])
 
     def mk_ax(r, c, rs=1, cs=1):
@@ -279,46 +279,23 @@ def make_unified_comparison_figure():
         ax.yaxis.label.set_color(LIGHT)
         return ax
 
-    # ═══ ROW 0: PIPELINE FLOW ═══════════════════════════════════════════════════
-    ax_flow = fig.add_subplot(gs[0, :])
-    ax_flow.set_facecolor(DARK)
-    ax_flow.set_xlim(0, 10)
-    ax_flow.set_ylim(0, 1)
-    ax_flow.axis("off")
+    def add_index(ax, letter):
+        """Add a bold letter index to the top-left of a panel."""
+        ax.text(-0.08, 1.08, letter, fontsize=16, fontweight="bold",
+               color=ACCENT, transform=ax.transAxes, ha="left", va="top")
 
-    pipeline_boxes = [
-        ("Stroke\nWeek 0", "#c0392b", 0.5),
-        ("TMS\nCortical", "#ff6b6b", 2.2),
-        ("SCS\nSpinal", "#4ecdc4", 3.9),
-        ("Matsuoka\nCPG", "#3498db", 5.6),
-        ("Muscle\nForce", "#27ae60", 7.3),
-        ("Week 5\nMetrics", "#f9a825", 9.0),
-    ]
-    for label, color, x in pipeline_boxes:
-        box = FancyBboxPatch((x-0.6, 0.30), 1.2, 0.4,
-                             boxstyle="round,pad=0.05",
-                             linewidth=1.2, edgecolor=color, facecolor=color,
-                             alpha=0.85)
-        ax_flow.add_patch(box)
-        ax_flow.text(x, 0.50, label, ha="center", va="center",
-                    fontsize=9, color="white", fontweight="bold")
+    # Suptitle replaces the removed pipeline row
+    fig.suptitle(
+        "Phase 4D Step 2: Multi-Protocol Rehabilitation Overlay Comparison\n"
+        f"Stroke (week 0): c_L={c_stroke:.3f}, AmpAI={m_stroke['ai']*100:.1f}%  →  "
+        f"Healthy: c_L={c_healthy:.3f}, AmpAI={m_healthy['ai']*100:.1f}%",
+        fontsize=13, fontweight="bold", color=ACCENT, y=0.985)
 
-    for x_arrow in [1.2, 2.9, 4.6, 6.3, 8.0]:
-        ax_flow.annotate("", xy=(x_arrow+0.3, 0.50), xytext=(x_arrow, 0.50),
-                        arrowprops=dict(arrowstyle="->", color=ACCENT, lw=1.8))
-
-    ax_flow.text(5.0, 0.90,
-                "Phase 4D Step 2: Multi-Protocol Rehabilitation Overlay Comparison",
-                ha="center", va="center", fontsize=13, color=ACCENT, fontweight="bold")
-    ax_flow.text(5.0, 0.05,
-                f"Stroke (week 0): c_L={c_stroke:.3f}, AmpAI={m_stroke['ai']*100:.1f}%  →  "
-                f"Healthy: c_L={c_healthy:.3f}, AmpAI={m_healthy['ai']*100:.1f}%",
-                ha="center", va="center", fontsize=9.5, color=LIGHT, style="italic")
-
-    # ═══ ROW 1: LEFT MUSCLE FORCE OVERLAY ═══════════════════════════════════════
-    ax_LF = mk_ax(1, 0, cs=2)
+    # ═══ ROW 0: LEFT MUSCLE FORCE OVERLAY (Panel A) ════════════════════════════
+    ax_LF = mk_ax(0, 0, cs=2)
     ax_LF.set_title("LEFT Extensor Muscle Force — Recovery Pattern Overlay (Week 5 outcomes)",
                    fontsize=11, color=LIGHT, fontweight="bold", pad=8)
+    add_index(ax_LF, "A")
 
     # Plot stroke baseline (greyish red)
     t_ss = res_stroke["time_s"]
@@ -348,10 +325,11 @@ def make_unified_comparison_figure():
     ax_LF.grid(True, alpha=0.15, color=LIGHT)
     ax_LF.set_xlim(t_plot[0], t_plot[-1])
 
-    # ═══ ROW 1: CPG OSCILLATOR (RIGHT) ═══════════════════════════════════════════
-    ax_cpg = mk_ax(1, 2)
+    # ═══ ROW 0: CPG OSCILLATOR (Panel B) ═══════════════════════════════════════
+    ax_cpg = mk_ax(0, 2)
     ax_cpg.set_title("CPG Oscillator\n(Healthy steady-state)", fontsize=10,
                     color=LIGHT, fontweight="bold", pad=6)
+    add_index(ax_cpg, "B")
 
     cpg_idx = np.argmax(res_healthy["time_s"] >= 10.0)
     cpg_t = res_healthy["time_s"][cpg_idx:cpg_idx+10000]
@@ -369,10 +347,11 @@ def make_unified_comparison_figure():
                  labelcolor=LIGHT, loc="upper right")
     ax_cpg.grid(True, alpha=0.15, color=LIGHT)
 
-    # ═══ ROW 2: RIGHT MUSCLE FORCE OVERLAY ═══════════════════════════════════════
-    ax_RF = mk_ax(2, 0, cs=2)
+    # ═══ ROW 1: RIGHT MUSCLE FORCE OVERLAY (Panel C) ═══════════════════════════
+    ax_RF = mk_ax(1, 0, cs=2)
     ax_RF.set_title("RIGHT Extensor Muscle Force — Recovery Pattern Overlay (Week 5 outcomes)",
                    fontsize=11, color=LIGHT, fontweight="bold", pad=8)
+    add_index(ax_RF, "C")
 
     force_R_stroke = (res_stroke["force_RE"] + res_stroke["force_RF"])[t_start_idx:]
     ax_RF.plot(t_plot, force_R_stroke, color=COLOR_STROKE, lw=2.0,
@@ -394,10 +373,11 @@ def make_unified_comparison_figure():
     ax_RF.grid(True, alpha=0.15, color=LIGHT)
     ax_RF.set_xlim(t_plot[0], t_plot[-1])
 
-    # ═══ ROW 2: STEP FREQUENCY BAR CHART ═════════════════════════════════════════
-    ax_freq = mk_ax(2, 2)
+    # ═══ ROW 1: STEP FREQUENCY BAR CHART (Panel D) ══════════════════════════════
+    ax_freq = mk_ax(1, 2)
     ax_freq.set_title("Step Frequency\n(Left vs Right)", fontsize=10,
                      color=LIGHT, fontweight="bold", pad=6)
+    add_index(ax_freq, "D")
 
     bar_labels = ["Stroke", "Healthy"] + [p[0] for p in protocols.keys()]
     freqs_L = [m_stroke["freq_L"], m_healthy["freq_L"]] + \
@@ -427,10 +407,11 @@ def make_unified_comparison_figure():
                   labelcolor=LIGHT, loc="upper right")
     ax_freq.grid(True, alpha=0.15, color=LIGHT, axis="y")
 
-    # ═══ ROW 3: ASYMMETRY EVOLUTION ALL PROTOCOLS ════════════════════════════════
-    ax_asym = mk_ax(3, 0, cs=2)
+    # ═══ ROW 2: ASYMMETRY EVOLUTION ALL PROTOCOLS (Panel E) ════════════════════
+    ax_asym = mk_ax(2, 0, cs=2)
     ax_asym.set_title("Amplitude Asymmetry Index Evolution — All Protocols (Week 0→5)",
                      fontsize=11, color=LIGHT, fontweight="bold", pad=8)
+    add_index(ax_asym, "E")
 
     weeks_eval = np.arange(0, 5.5, 0.5)
 
@@ -459,11 +440,12 @@ def make_unified_comparison_figure():
     ax_asym.grid(True, alpha=0.15, color=LIGHT)
     ax_asym.set_xlim(0, 5)
 
-    # ═══ ROW 3: SUMMARY METRICS TABLE ════════════════════════════════════════════
-    ax_tab = mk_ax(3, 2)
+    # ═══ ROW 2: SUMMARY METRICS TABLE (Panel F) ═════════════════════════════════
+    ax_tab = mk_ax(2, 2)
     ax_tab.axis("off")
     ax_tab.set_title("Summary Metrics @ Week 5", fontsize=10,
                     color=LIGHT, fontweight="bold", pad=4)
+    add_index(ax_tab, "F")
 
     # Best protocol (lowest |AmpAI|)
     best_proto = min(proto_metrics.items(), key=lambda kv: abs(kv[1]["ai"]))
