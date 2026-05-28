@@ -34,3 +34,22 @@ Cython>=3.2.0
 # Development and utilities
 IPython>=9.13.0
 Jupyter>=1.0.0
+
+# ─────────────────────────────────────────────────────────────────────────
+#  BigStroke-MN5 stack (Stage 1+)
+# ─────────────────────────────────────────────────────────────────────────
+# NEST spiking neural simulator — primary engine for M1 microcircuit
+# and (later) spinal CPG.  pip install works on most Linux x86_64; on
+# macOS / Apple Silicon use:  conda install -c conda-forge nest-simulator
+# On MareNostrum 5:  module load nest/3.7
+nest-simulator>=3.7 ; platform_system == "Linux"
+
+# Workflow management for ~1,400-run pipeline (MN5 production batch)
+snakemake>=8.0
+
+# Test runner
+pytest>=8.0
+
+# Optional (Stage 3+): TVB ↔ NEST coupling.  Install separately as it
+# pulls a large dependency tree; see bigstroke_mn5/README.md.
+# tvb-multiscale  ; install from github.com/the-virtual-brain/tvb-multiscale
