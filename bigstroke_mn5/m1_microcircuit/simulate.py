@@ -72,9 +72,18 @@ def run(scale: float = None,
     sizes = net["sizes"]
     n_total = sum(sizes.values())
     print(f"[Build] {n_total:,} neurons across {len(populations)} populations.")
-    if net["stroke_silenced"] is not None:
-        print(f"[Build] Stroke: {len(net['stroke_silenced'])} L5e neurons silenced "
-              f"in left hemisphere.")
+    if stroke_fraction > 0:
+        n_L5e = sizes["L_L5e"]
+        print(f"[Build] Stroke model (graded lesion in left L5e, n={n_L5e}):")
+        print(f"         Core     (fully silenced) : {net['n_core']:>4d} neurons "
+              f"({net['n_core']/n_L5e*100:.0f}%)")
+        print(f"         Penumbra (impaired, active): {net['n_penumbra']:>4d} neurons "
+              f"({net['n_penumbra']/n_L5e*100:.0f}%)")
+        print(f"         Healthy  (unaffected)      : "
+              f"{n_L5e - net['n_core'] - net['n_penumbra']:>4d} neurons "
+              f"({(n_L5e - net['n_core'] - net['n_penumbra'])/n_L5e*100:.0f}%)")
+        print(f"         → Diaschisis: callosal projections from core naturally "
+              f"silent (wired but unfired)")
 
     t_build = time.time() - t0
 

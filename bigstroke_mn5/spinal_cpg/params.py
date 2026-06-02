@@ -35,11 +35,25 @@ NETWORK_SCALE = 0.05
 # Bilateral
 SIDES = ("L", "R")
 
-# Descending (CST/M1) drive in Hz per side (asymmetric in stroke)
-DESCENDING_DRIVE_L_HZ = 4000.0   # tonic excitatory drive to V2a (per neuron)
+# Descending (CST/M1) drive in Hz per side
+DESCENDING_DRIVE_L_HZ = 4000.0
 DESCENDING_DRIVE_R_HZ = 4000.0
-# Stroke: typically reduce L drive (matches Phase 1 CST asymmetry)
-STROKE_DRIVE_REDUCTION_L = 0.0    # 0.0 = healthy, 0.36 = matches Phase 1 (35.6% deficit)
+
+# ── Graded stroke: CST drive asymmetry from M1 lesion ────────────────────
+# When used standalone (without M1 microcircuit coupled), the spinal CPG
+# receives a proxy drive reduction that mirrors the graded lesion:
+#
+#   STROKE_FRACTION: total fraction of L M1 L5e affected
+#   Core    (60% of STROKE_FRACTION): contributes 0% drive (silenced)
+#   Penumbra(40% of STROKE_FRACTION): contributes PENUMBRA_DRIVE_FRACTION
+#                                     of normal (partially active)
+#
+# Example: stroke_fraction=0.5, core=0.3, penumbra=0.2
+#   effective_reduction = 0.3*1.0 + 0.2*(1-0.5) = 0.3 + 0.1 = 0.4 (40%)
+#
+STROKE_FRACTION_L        = 0.0    # total lesion (0.0=healthy, 0.5=severe)
+CORE_FRACTION            = 0.60   # proportion of lesion that is core
+PENUMBRA_DRIVE_FRACTION  = 0.50   # penumbra neurons fire at 50% of normal
 
 # Simulation
 SIM_TIME_MS = 4000.0
@@ -111,6 +125,41 @@ assert CONN_CONTRA.shape == (8, 8)
 EXCITATORY = {"V0_V", "V2a", "V3"}        # excite their targets
 INHIBITORY = {"V0_D", "V1", "V2b"}        # inhibit
 MOTONEURONS = {"MN_F", "MN_E"}             # excite muscle (output)
+
+
+def effective_drive_reduction(stroke_fraction=None,
+                               core_frac=None, penumbra_drive=None):
+    """
+    Compute the effective fractional reduction in descending drive from
+    a graded lesion (core fully silent + penumbra partially active).
+
+    Parameters
+    ----------
+    stroke_fraction : float  total fraction of L5e affected (default STROKE_FRACTION_L)
+    core_frac       : float  fraction of lesion that is core (default CORE_FRACTION)
+    penumbra_drive  : float  penumbra firing as fraction of normal (default PENUMBRA_DRIVE_FRACTION)
+
+    Returns
+    -------
+    float   effective drive reduction (0.0 = healthy, → 1.0 = all silent)
+
+    Example
+    -------
+    >>> effective_drive_reduction(0.5)   # moderate stroke
+    0.40   # 30% from core + 10% from penumbra
+    """
+    if stroke_fraction is None: stroke_fraction = STROKE_FRACTION_L
+    if core_frac       is None: core_frac       = CORE_FRACTION
+    if penumbra_drive  is None: penumbra_drive  = PENUMBRA_DRIVE_FRACTION
+
+    f_core     = stroke_fraction * core_frac
+    f_penumbra = stroke_fraction * (1.0 - core_frac)
+    reduction  = f_core * 1.0 + f_penumbra * (1.0 - penumbra_drive)
+    return float(reduction)
+
+
+# Backward-compat alias (old --stroke flag)
+STROKE_DRIVE_REDUCTION_L = effective_drive_reduction()
 
 
 def is_excitatory(pop):

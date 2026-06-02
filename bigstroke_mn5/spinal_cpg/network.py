@@ -15,30 +15,32 @@ def _nest():
     return nest
 
 
-def build_network(scale=None, stroke_drive_reduction_L=None,
+def build_network(scale=None, stroke_fraction=None,
                   seed=42, n_threads=1):
     """
     Build the bilateral spinal CPG.
 
     Parameters
     ----------
-    scale : float or None
-        Override NETWORK_SCALE.
-    stroke_drive_reduction_L : float or None
-        Fraction by which to reduce descending drive on the LEFT side
-        (0.0 = healthy; 0.36 = matches Phase 1 CST deficit).
-    seed, n_threads : NEST kernel params.
+    scale            : float  NETWORK_SCALE override.
+    stroke_fraction  : float  Total fraction of left M1 L5e affected
+                              (0.0 = healthy; 0.5 = severe stroke).
+                              Core (60%) → 0% drive; penumbra (40%) → 50% drive.
+    seed, n_threads  : NEST kernel params.
 
     Returns
     -------
-    dict {populations, sizes, scale, drive_L_hz, drive_R_hz}
+    dict {populations, sizes, scale, drive_L_hz, drive_R_hz,
+          stroke_fraction, drive_reduction_L}
     """
     nest = _nest()
 
     if scale is None:
         scale = P.NETWORK_SCALE
-    if stroke_drive_reduction_L is None:
-        stroke_drive_reduction_L = P.STROKE_DRIVE_REDUCTION_L
+    if stroke_fraction is None:
+        stroke_fraction = P.STROKE_FRACTION_L
+
+    stroke_drive_reduction_L = P.effective_drive_reduction(stroke_fraction)
 
     nest.ResetKernel()
     nest.SetKernelStatus({
@@ -107,11 +109,13 @@ def build_network(scale=None, stroke_drive_reduction_L=None,
     drive_R = P.DESCENDING_DRIVE_R_HZ
 
     return {
-        "populations": populations,
-        "sizes": {n: len(nc) for n, nc in populations.items()},
-        "scale": scale,
-        "drive_L_hz": drive_L,
-        "drive_R_hz": drive_R,
+        "populations":        populations,
+        "sizes":              {n: len(nc) for n, nc in populations.items()},
+        "scale":              scale,
+        "drive_L_hz":         drive_L,
+        "drive_R_hz":         drive_R,
+        "stroke_fraction":    stroke_fraction,
+        "drive_reduction_L":  stroke_drive_reduction_L,
     }
 
 

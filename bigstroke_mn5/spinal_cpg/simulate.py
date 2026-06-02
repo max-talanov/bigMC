@@ -21,7 +21,7 @@ from . import analysis as A
 def run(scale=None, stroke=None, sim_time_ms=None,
         output_dir=None, label="local", seed=42, n_threads=1):
     scale = scale if scale is not None else P.NETWORK_SCALE
-    stroke = stroke if stroke is not None else P.STROKE_DRIVE_REDUCTION_L
+    stroke = stroke if stroke is not None else P.STROKE_FRACTION_L
     sim_time_ms = sim_time_ms if sim_time_ms is not None else P.SIM_TIME_MS
 
     if output_dir is None:
@@ -48,14 +48,23 @@ def run(scale=None, stroke=None, sim_time_ms=None,
     t0 = time.time()
 
     print("\n[Build] Constructing bilateral spinal CPG ...")
-    net = N.build_network(scale=scale, stroke_drive_reduction_L=stroke,
+    net = N.build_network(scale=scale, stroke_fraction=stroke,
                           seed=seed, n_threads=n_threads)
     pops = net["populations"]
     sizes = net["sizes"]
     print(f"[Build] {sum(sizes.values()):,} neurons across {len(pops)} populations.")
-    print(f"[Build] Descending drive: L={net['drive_L_hz']:.0f} Hz, R={net['drive_R_hz']:.0f} Hz")
+    print(f"[Build] Descending drive: L={net['drive_L_hz']:.0f} Hz  R={net['drive_R_hz']:.0f} Hz")
     if stroke > 0:
-        print(f"[Build] Stroke: left side drive reduced by {stroke*100:.0f}%")
+        f_core = stroke * P.CORE_FRACTION
+        f_peri = stroke * (1.0 - P.CORE_FRACTION)
+        print(f"[Build] Graded stroke (left M1 L5e → V2a drive):")
+        print(f"         Total lesion:   {stroke*100:.1f}% of L M1 L5e")
+        print(f"         Core:           {f_core*100:.1f}%  → 0% drive  (silenced)")
+        print(f"         Penumbra:       {f_peri*100:.1f}%  → "
+              f"{P.PENUMBRA_DRIVE_FRACTION*100:.0f}% drive (impaired)")
+        print(f"         Effective drive reduction: "
+              f"{net['drive_reduction_L']*100:.1f}%  "
+              f"(drive {net['drive_L_hz']:.0f} Hz)")
 
     print("\n[Stim ] Background Poisson per population ...")
     S.attach_background(pops)
