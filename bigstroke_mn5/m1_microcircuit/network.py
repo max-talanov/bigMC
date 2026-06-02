@@ -93,6 +93,9 @@ def build_network(scale=None, stroke_fraction=None, seed=42, n_threads=1):
             stroke_silenced = silenced
 
     # ── Connect populations (intra-hemispheric Potjans-Diesmann) ────────
+    # Compute in-degrees at full scale (preserves dynamics at reduced N).
+    # K_full = log(1-p) / log(1 - 1/(N_src_full * N_tgt_full)) / N_tgt_full
+    full_sizes = P.N_FULL
     for hemi in P.HEMISPHERES:
         for tgt_pop in P.POP_NAMES:
             tgt = populations[P.pop_full_name(hemi, tgt_pop)]
@@ -104,13 +107,23 @@ def build_network(scale=None, stroke_fraction=None, seed=42, n_threads=1):
                 if p <= 0:
                     continue
 
-                # Number of input synapses per target neuron
-                # K = ln(1 - p) / ln(1 - 1/(N_src * N_tgt)) * N_src * N_tgt (full formula)
-                # Simplified Potjans formula:
-                n_syn = max(1, int(round(
-                    np.log(1.0 - p) /
-                    np.log(1.0 - 1.0 / (len(src) * len(tgt)))
-                ))) if p < 1.0 else len(src) * len(tgt)
+                # In-degree per target neuron
+                if P.PRESERVE_INDEGREE_AT_SCALE:
+                    N_src_full = full_sizes[src_pop]
+                    N_tgt_full = full_sizes[tgt_pop]
+                    n_total_full = int(round(
+                        np.log(1.0 - p) /
+                        np.log(1.0 - 1.0 / (N_src_full * N_tgt_full))
+                    )) if p < 1.0 else N_src_full * N_tgt_full
+                    K_indegree = max(1, int(round(n_total_full / N_tgt_full)))
+                else:
+                    # Scale connectivity with the network (causes rate inflation
+                    # at low scale, but lower correlation; only useful for QC).
+                    n_total = max(1, int(round(
+                        np.log(1.0 - p) /
+                        np.log(1.0 - 1.0 / (len(src) * len(tgt)))
+                    ))) if p < 1.0 else len(src) * len(tgt)
+                    K_indegree = max(1, int(round(n_total / len(tgt))))
 
                 # Weight: positive for E, negative for I
                 if P.is_excitatory(src_pop):
@@ -133,10 +146,10 @@ def build_network(scale=None, stroke_fraction=None, seed=42, n_threads=1):
                 }
 
                 conn_spec = {
-                    "rule": "fixed_total_number",
-                    "N": n_syn,
+                    "rule": "fixed_indegree",
+                    "indegree": K_indegree,
                     "allow_autapses": False,
-                    "allow_multapses": True,
+                    "allow_multapses": True,   # required at small scale
                 }
 
                 nest.Connect(src, tgt, conn_spec, syn_spec)

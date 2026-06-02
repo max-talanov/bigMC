@@ -21,6 +21,13 @@ NETWORK_SCALE = 0.01
 # Bilateral M1 (left + right hemispheres)
 HEMISPHERES = ("L", "R")
 
+# Preserve mean in-degree at full-scale value when NETWORK_SCALE < 1.0.
+# When True, recurrent indegrees are kept at full-scale K via multapses, so
+# spontaneous firing rates match Potjans-Diesmann 2014 targets at any scale
+# (at the cost of higher pairwise correlation at small scales).  See PD2014
+# Appendix D and the PyNEST microcircuit reference implementation.
+PRESERVE_INDEGREE_AT_SCALE = True
+
 # Stroke zone: fraction of L5e in the LEFT hemisphere to silence
 #   0.0 = healthy
 #   0.5 = severe stroke (50% of L5e CST projection neurons lost)
