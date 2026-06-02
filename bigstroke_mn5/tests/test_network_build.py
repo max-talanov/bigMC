@@ -51,3 +51,15 @@ def test_default_simulation_params_sane():
     assert P.DT_MS > 0 and P.DT_MS < 1.0
     assert P.SIM_TIME_MS >= 100
     assert 0 <= P.STROKE_FRACTION_L5e_LEFT <= 1
+
+
+def test_stroke_fractions_sum_to_one():
+    """Core + penumbra fractions must sum to exactly 1.0."""
+    assert abs(P.STROKE_CORE_FRACTION + P.STROKE_PENUMBRA_FRACTION - 1.0) < 1e-9
+
+
+def test_penumbra_params_direction():
+    """Penumbra shifts must be biologically sensible (depolarising, not hyperpolarising)."""
+    assert P.PENUMBRA_E_L_SHIFT_MV > 0,  "E_L should shift positive (depolarisation)"
+    assert P.PENUMBRA_V_TH_SHIFT_MV > 0, "V_th shift should be positive (harder to fire)"
+    assert 0 < P.PENUMBRA_TAU_M_FACTOR < 1, "tau_m factor < 1 → leak conductance > 1x"

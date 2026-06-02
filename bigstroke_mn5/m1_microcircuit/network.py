@@ -80,17 +80,54 @@ def build_network(scale=None, stroke_fraction=None, seed=42, n_threads=1):
             nodes.set(V_m=list(v_init))
             populations[full_name] = nodes
 
-    # ── Apply stroke (silence a fraction of L5e in left hemisphere) ─────
-    stroke_silenced = None
+    # ── Apply graded stroke: ischemic core + penumbra ────────────────────
+    #
+    # Based on Hofmeijer & van Putten (2012), Lo et al. (2003).
+    # Only L5e of the LEFT hemisphere is affected (CST projection neurons).
+    #
+    # Core    (60% of lesion): V_th → 1e6 mV  — completely silenced
+    # Penumbra(40% of lesion): biophysically impaired but potentially active
+    #   E_L   raised by PENUMBRA_E_L_SHIFT_MV  (+5 mV, ATP pump failure)
+    #   V_th  raised by PENUMBRA_V_TH_SHIFT_MV (+8 mV, reduced reliability)
+    #   tau_m scaled by PENUMBRA_TAU_M_FACTOR   (×0.5, leak conductance ×2)
+    #
+    # Diaschisis: core neurons stop spiking → callosal projections naturally
+    # silent (projections already wired); contralateral hyper-excitability
+    # not yet modelled (Stage 4).
+
+    stroke_info = {"core": None, "penumbra": None}
     if stroke_fraction > 0:
         L_L5e = populations["L_L5e"]
-        n_silence = int(round(len(L_L5e) * stroke_fraction))
-        if n_silence > 0:
-            # Pick first n_silence (deterministic for reproducibility)
-            silenced = L_L5e[:n_silence]
-            # Silence by raising threshold beyond reach
-            silenced.set({"V_th": 1e6, "V_reset": -65.0})
-            stroke_silenced = silenced
+        n_total = int(round(len(L_L5e) * stroke_fraction))
+
+        # Use seed-derived shuffle for reproducibility with variability
+        rng = np.random.default_rng(seed + 1)
+        indices = rng.permutation(len(L_L5e))
+
+        n_core = max(1, int(round(n_total * P.STROKE_CORE_FRACTION)))
+        n_penumbra = max(0, n_total - n_core)
+
+        core_idx = sorted(indices[:n_core].tolist())
+        peri_idx = sorted(indices[n_core:n_core + n_penumbra].tolist())
+
+        if n_core > 0:
+            core_neurons = L_L5e[core_idx]
+            core_neurons.set({"V_th": 1e6, "V_reset": -65.0})
+            stroke_info["core"] = core_neurons
+
+        if n_penumbra > 0:
+            peri_neurons = L_L5e[peri_idx]
+            base_E_L  = P.NEURON_PARAMS["E_L"]
+            base_V_th = P.NEURON_PARAMS["V_th"]
+            base_tau  = P.NEURON_PARAMS["tau_m"]
+            peri_neurons.set({
+                "E_L":   base_E_L  + P.PENUMBRA_E_L_SHIFT_MV,
+                "V_th":  base_V_th + P.PENUMBRA_V_TH_SHIFT_MV,
+                "tau_m": base_tau  * P.PENUMBRA_TAU_M_FACTOR,
+                # Penumbra V_m starts at new E_L (already depolarised)
+                "V_m":   base_E_L  + P.PENUMBRA_E_L_SHIFT_MV,
+            })
+            stroke_info["penumbra"] = peri_neurons
 
     # ── Connect populations (intra-hemispheric Potjans-Diesmann) ────────
     # Compute in-degrees at full scale (preserves dynamics at reduced N).
@@ -182,11 +219,16 @@ def build_network(scale=None, stroke_fraction=None, seed=42, n_threads=1):
                 }
                 nest.Connect(src, tgt, conn_spec, syn_spec)
 
+    n_core = len(stroke_info["core"]) if stroke_info["core"] is not None else 0
+    n_peri = len(stroke_info["penumbra"]) if stroke_info["penumbra"] is not None else 0
     return {
-        "populations": populations,
-        "sizes": {n: len(nc) for n, nc in populations.items()},
-        "stroke_silenced": stroke_silenced,
-        "scale": scale,
+        "populations":    populations,
+        "sizes":          {n: len(nc) for n, nc in populations.items()},
+        "stroke_core":    stroke_info["core"],
+        "stroke_penumbra": stroke_info["penumbra"],
+        "n_core":         n_core,
+        "n_penumbra":     n_peri,
+        "scale":          scale,
     }
 
 

@@ -28,10 +28,35 @@ HEMISPHERES = ("L", "R")
 # Appendix D and the PyNEST microcircuit reference implementation.
 PRESERVE_INDEGREE_AT_SCALE = True
 
-# Stroke zone: fraction of L5e in the LEFT hemisphere to silence
-#   0.0 = healthy
-#   0.5 = severe stroke (50% of L5e CST projection neurons lost)
+# ── Stroke zone: graded lesion with ischemic core + penumbra ──────────────
+#
+# Based on Hofmeijer & van Putten (2012) Stroke 43:607–615
+# and Lo et al. (2003) Nature Reviews Neuroscience 4:399–415
+#
+# Total lesion fraction of L5e neurons in the LEFT hemisphere:
+#   0.0  = healthy
+#   0.3  = moderate stroke (30% of L5e affected)
+#   0.5  = severe stroke
+#
+# Within the lesion, 60% is ischemic core, 40% penumbra (typical ratio).
+# Core:     neurons completely silenced (V_th → ∞)
+# Penumbra: neurons partially impaired:
+#             E_L raised +5 mV (ATP-dependent K+ pump failure)
+#             V_th raised +8 mV (lower firing probability)
+#             tau_m halved (leak conductance ×2 from membrane damage)
+# Diaschisis hook: callosal L5e→L5e projections are naturally reduced once
+#   core neurons stop spiking, but contralateral hyper-excitability is NOT
+#   yet modelled explicitly (planned Stage 4 extension).
+
 STROKE_FRACTION_L5e_LEFT = 0.0   # default: healthy
+
+STROKE_CORE_FRACTION     = 0.60  # 60% of lesion = ischemic core
+STROKE_PENUMBRA_FRACTION = 0.40  # 40% of lesion = penumbra ring
+
+# Penumbra biophysical deltas (from resting healthy state)
+PENUMBRA_E_L_SHIFT_MV   = +5.0  # depolarization (ATP pump failure)
+PENUMBRA_V_TH_SHIFT_MV  = +8.0  # reduced reliability (membrane damage)
+PENUMBRA_TAU_M_FACTOR   =  0.5  # tau_m halved → leak conductance ×2
 
 # Simulation
 SIM_TIME_MS = 1000.0       # total simulation time

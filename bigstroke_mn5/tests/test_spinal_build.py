@@ -57,8 +57,40 @@ def test_kext_complete():
 def test_default_simulation_params_sane():
     assert P.DT_MS > 0 and P.DT_MS < 1.0
     assert P.SIM_TIME_MS > P.WARMUP_MS
-    assert 0 <= P.STROKE_DRIVE_REDUCTION_L <= 1
+    assert 0 <= P.STROKE_FRACTION_L <= 1
 
 
 def test_descending_target_valid():
     assert P.DESCENDING_TARGET in P.POP_NAMES
+
+
+def test_effective_drive_reduction_healthy():
+    """No lesion → no drive reduction."""
+    assert P.effective_drive_reduction(0.0) == 0.0
+
+
+def test_effective_drive_reduction_full_core():
+    """All-core lesion of 50% → exactly 50% drive lost."""
+    r = P.effective_drive_reduction(stroke_fraction=0.5,
+                                     core_frac=1.0, penumbra_drive=0.0)
+    assert abs(r - 0.5) < 1e-9
+
+
+def test_effective_drive_reduction_graded():
+    """
+    stroke_fraction=0.5, core=60%, penumbra fires at 50%:
+      core contrib    = 0.5 * 0.6 * 1.0 = 0.30
+      penumbra contrib= 0.5 * 0.4 * 0.5 = 0.10
+      total reduction = 0.40
+    """
+    r = P.effective_drive_reduction(stroke_fraction=0.5,
+                                     core_frac=0.6,
+                                     penumbra_drive=0.5)
+    assert abs(r - 0.40) < 1e-9
+
+
+def test_effective_drive_reduction_bounds():
+    """Reduction always in [0, 1]."""
+    for sf in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        r = P.effective_drive_reduction(sf)
+        assert 0.0 <= r <= 1.0
