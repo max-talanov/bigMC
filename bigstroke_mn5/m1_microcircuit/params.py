@@ -58,7 +58,46 @@ PENUMBRA_E_L_SHIFT_MV   = +5.0  # depolarization (ATP pump failure)
 PENUMBRA_V_TH_SHIFT_MV  = +8.0  # reduced reliability (membrane damage)
 PENUMBRA_TAU_M_FACTOR   =  0.5  # tau_m halved → leak conductance ×2
 
-# Simulation
+# ── Progressive degeneration (Stage A: time-phased cell death) ────────────
+#
+# Multi-timescale model: fast spiking (ms) + slow degeneration (hours).
+# A spatial infarct affects ALL left-hemisphere populations (vascular
+# territory, not cell-type ablation).  Within the penumbra, neurons die on
+# a cell-type-specific schedule reflecting selective neuronal vulnerability:
+#
+#   Excitatory pyramidal    → high vulnerability (NMDA/AMPA excitotoxicity)
+#   PV+ fast-spiking IN      → high vulnerability (high metabolic demand)
+#   Buffered IN (CB+/CR+)    → resistant (Ca²⁺ buffering) → may recover
+#
+# References: Hofmeijer & van Putten 2012; Lo et al. 2003;
+#             Kreuzberg et al. 2010 (PV+ vulnerability);
+#             Povysheva et al. 2019 (interneuron Ca²⁺ buffering).
+
+# Fraction of each inhibitory population that is PV-like (vulnerable).
+# Cortical PV+ cells are ~40% of GABAergic neurons (Rudy et al. 2011).
+PV_FRACTION = 0.40
+
+# Penumbra → core conversion time (biological hours) per vulnerability class.
+# After this long in penumbra, the neuron is silenced (dies).  inf = survives.
+DEATH_TIME_HOURS = {
+    "excitatory":          6.0,            # pyramidal: fast excitotoxic death
+    "pv_inhibitory":       9.0,            # PV+ fast-spiker: vulnerable, slower
+    "buffered_inhibitory": float("inf"),   # calbindin/calretinin: survive
+}
+
+# Buffered penumbra interneurons recover toward healthy params after this long.
+RECOVERY_TIME_HOURS = 12.0
+
+# Spread in per-neuron death times (relative SD) — biological variability.
+DEATH_TIME_REL_SD = 0.25
+
+# Degeneration-run defaults (operator splitting across timescales)
+DEGEN_EPOCHS          = 24      # number of slow steps (→ 24 biological hours)
+DEGEN_HOURS_PER_EPOCH = 1.0     # biological hours advanced per epoch
+DEGEN_EPOCH_SIM_MS    = 400.0   # ms of spiking simulated per epoch (activity sample)
+DEGEN_LESION_FRACTION = 0.40    # spatial fraction of L hemisphere in the infarct
+
+# ── Simulation ────────────────────────────────────────────────────────────
 SIM_TIME_MS = 1000.0       # total simulation time
 DT_MS       = 0.1          # integration timestep
 WARMUP_MS   = 100.0        # discard this much initial transient
@@ -182,6 +221,24 @@ def is_excitatory(name):
 def pop_full_name(hemi, pop):
     """E.g. ('L', 'L23e') -> 'L_L23e'."""
     return f"{hemi}_{pop}"
+
+
+def vulnerability_of(pop, is_pv=False):
+    """
+    Return the vulnerability class for a neuron.
+
+    Parameters
+    ----------
+    pop   : str   population name (e.g. 'L5e', 'L4i')
+    is_pv : bool  for inhibitory neurons, whether this one is PV-like
+
+    Returns
+    -------
+    str   one of 'excitatory', 'pv_inhibitory', 'buffered_inhibitory'
+    """
+    if is_excitatory(pop):
+        return "excitatory"
+    return "pv_inhibitory" if is_pv else "buffered_inhibitory"
 
 
 if __name__ == "__main__":
