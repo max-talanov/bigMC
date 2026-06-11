@@ -114,6 +114,52 @@ L_MIN, L_MAX   = 0.5, 2.0
 SHORTEN_GAIN   = 0.010
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  MOTONEURON-POOL RECRUITMENT  (bio-plausibility: flaccid paralysis threshold)
+# ══════════════════════════════════════════════════════════════════════════════
+# Physiology: voluntary/CPG force depends on the fraction of the α-motoneuron
+# pool that the descending drive can recruit above firing threshold (Henneman
+# size principle).  Below a critical drive, too few motor units are recruited
+# → negligible force = the flaccid paralysis of acute hemiparesis.
+#
+# We model recruitment as a sigmoid of the side's descending drive c:
+#     R(c) = 1 / (1 + exp(-K_RECRUIT · (c − C_CRIT)))
+# applied as a multiplicative gain on the motoneuron activation target.
+#
+# Tuning (C_CRIT=0.55, K_RECRUIT=12) is deliberately chosen so that the
+# previously-validated stroke drive (c≈0.97, "mild") is essentially
+# unaffected (R≈0.99), while moderate/severe/complete lesions (lower drive)
+# cross the threshold into flaccidity:
+#     c=1.50 (healthy)   → R≈1.00   full force
+#     c=0.97 (mild)      → R≈0.99   ~unchanged (back-compatible)
+#     c=0.60 (moderate)  → R≈0.65
+#     c=0.45 (severe)    → R≈0.23
+#     c=0.30 (complete)  → R≈0.03   flaccid (force ≈ 0)
+C_CRIT        = 0.55    # critical drive for motoneuron recruitment
+K_RECRUIT     = 12.0    # steepness of the recruitment sigmoid
+RECRUIT_ON    = True    # master switch (False reproduces pre-recruitment model)
+
+# ── Clinical stroke severity → acute descending-drive scale (fraction of C0) ──
+# Acute deficit reflects more than the chronic CST drop: spinal shock,
+# diaschisis and peri-lesional oedema transiently suppress descending output.
+# Recovery (Phase 3/4) lets the drive climb back up through the recruitment
+# threshold, restoring force over weeks.
+STROKE_SEVERITY = {
+    "healthy":  1.00,   # c_L = 1.50  → full force
+    "mild":     0.65,   # c_L ≈ 0.97  → ~preserved (matches Phase-1 TVB deficit)
+    "moderate": 0.40,   # c_L ≈ 0.60  → ~65% force, clear weakness
+    "severe":   0.30,   # c_L ≈ 0.45  → ~23% force, near-flaccid
+    "complete": 0.20,   # c_L ≈ 0.30  → ~3% force, flaccid paralysis
+}
+
+
+def recruitment_gain(c: float,
+                     c_crit: float = C_CRIT,
+                     k: float = K_RECRUIT) -> float:
+    """Sigmoidal motoneuron-pool recruitment as a fraction [0,1] of maximal
+    recruitable force, given descending drive c (Henneman size principle)."""
+    return float(1.0 / (1.0 + np.exp(-k * (c - c_crit))))
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  LOAD PHASE 1 TVB RESULTS
 # ══════════════════════════════════════════════════════════════════════════════
 def load_phase1_scales() -> dict:
@@ -152,7 +198,8 @@ def clamp(x, lo, hi):
 
 
 def simulate(c_L: float, c_R: float,
-             sim_s: float = 20.0, dt_s: float = 0.001) -> dict:
+             sim_s: float = 20.0, dt_s: float = 0.001,
+             recruit: bool = RECRUIT_ON) -> dict:
     """
     Run the bilateral Matsuoka CPG + muscle proxies.
 
@@ -161,6 +208,8 @@ def simulate(c_L: float, c_R: float,
     c_L, c_R : tonic inputs to left / right neurons
     sim_s    : total simulation time [s]
     dt_s     : integration step [s]
+    recruit  : if True, apply the motoneuron-pool recruitment gain so that
+               low descending drive yields flaccid (≈0) force on that side.
 
     Returns
     -------
@@ -213,6 +262,14 @@ def simulate(c_L: float, c_R: float,
     tFF = TAU_FORCE_FALL / 1000.0
     tL  = TAU_LENGTH_MS  / 1000.0
 
+    # Per-side motoneuron-pool recruitment gain (constant over the run for a
+    # given drive).  Neurons 0,1 = left; 2,3 = right.  recruit=False → all 1.0.
+    if recruit:
+        gL, gR = recruitment_gain(c_L), recruitment_gain(c_R)
+    else:
+        gL = gR = 1.0
+    rec_gain = np.array([gL, gL, gR, gR])
+
     for k in range(N):
         t = k * dt_s
 
@@ -227,8 +284,11 @@ def simulate(c_L: float, c_R: float,
         # Map Matsuoka output [0, ~2] to a firing-rate proxy [0, ~200 Hz]
         r = y * 100.0
         for i in range(4):
-            # Activation (low-pass)
-            act_tgt = clamp(ACT_GAIN * r[i] / 100.0, 0, ACT_MAX)
+            # Motoneuron-pool recruitment gain (per side): neurons 0,1 = left,
+            # 2,3 = right.  Below C_CRIT the limb is flaccid (force ≈ 0).
+            rec = rec_gain[i]
+            # Activation (low-pass), scaled by recruitable motor-unit fraction
+            act_tgt = clamp(ACT_GAIN * r[i] / 100.0 * rec, 0, ACT_MAX)
             act[i]  += (dt_s / tA) * (act_tgt - act[i])
 
             # Force (saturating, asymmetric rise/decay)
