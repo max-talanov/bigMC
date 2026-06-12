@@ -201,7 +201,8 @@ def simulate(c_L: float, c_R: float,
              sim_s: float = 20.0, dt_s: float = 0.001,
              recruit: bool = RECRUIT_ON,
              scs_amp_L: float = 0.0, scs_freq_L: float = 20.0,
-             scs_amp_R: float = 0.0, scs_freq_R: float = 20.0) -> dict:
+             scs_amp_R: float = 0.0, scs_freq_R: float = 20.0,
+             c_crit_L: float = None, c_crit_R: float = None) -> dict:
     """
     Run the bilateral Matsuoka CPG + muscle proxies.
 
@@ -270,8 +271,14 @@ def simulate(c_L: float, c_R: float,
 
     # Per-side motoneuron-pool recruitment gain (constant over the run for a
     # given drive).  Neurons 0,1 = left; 2,3 = right.  recruit=False → all 1.0.
+    # c_crit_L/c_crit_R override the recruitment threshold per side; epidural
+    # SCS lowers it (motoneurons recruited at lower descending drive), so a
+    # flaccid limb can produce force sooner.  None → global C_CRIT.
+    crit_L = C_CRIT if c_crit_L is None else c_crit_L
+    crit_R = C_CRIT if c_crit_R is None else c_crit_R
     if recruit:
-        gL, gR = recruitment_gain(c_L), recruitment_gain(c_R)
+        gL = recruitment_gain(c_L, c_crit=crit_L)
+        gR = recruitment_gain(c_R, c_crit=crit_R)
     else:
         gL = gR = 1.0
     rec_gain = np.array([gL, gL, gR, gR])
