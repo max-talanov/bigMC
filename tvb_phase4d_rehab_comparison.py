@@ -62,6 +62,10 @@ c_stroke = C0 * p2.STROKE_SEVERITY[ACUTE_SEVERITY]
 c_healthy = C0
 c_R = C0 * scales["scale_R"]
 
+# Clinical evaluation timepoints
+EVAL_WEEK = 8.0   # Subacute (~2 months) — the protocol-differentiation window
+MAX_WEEK = 24     # 6 months (clinical plateau / chronic phase)
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  CPG SIMULATOR — uses the canonical p2.simulate() (Phase 2), which now
 #  carries the motoneuron-recruitment / flaccid-stroke model AND optional
@@ -69,53 +73,89 @@ c_R = C0 * scales["scale_R"]
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def natural_fraction(weeks, k=0.18, t0=10.0, t_max=24):
+    """
+    Normalised NATURAL (no-NIBS) recovery fraction in [0,1]: 0 at week 0,
+    ~1 at t_max.  Logistic, tuned to stroke-rehab literature (Copenhagen
+    Stroke Study t0≈10 wk; Krakauer 2010 rate; Duncan 2000 24-wk plateau).
+    """
+    r  = 1.0 / (1.0 + np.exp(-k * (weeks - t0)))
+    r0 = 1.0 / (1.0 + np.exp(-k * (0 - t0)))
+    r1 = 1.0 / (1.0 + np.exp(-k * (t_max - t0)))
+    return np.clip((r - r0) / max(float(r1 - r0), 1e-6), 0.0, 1.0)
+
+
 def recovery_c_L(weeks, c_stroke, c_healthy, k=0.18, t0=10.0, t_max=24):
-    """
-    Logistic recovery with CLINICALLY REALISTIC timeline.
-
-    Parameters chosen to match stroke rehabilitation literature:
-      - t0=10 weeks  (inflection point ≈ 2.5 months; Copenhagen Stroke Study)
-      - k=0.18       (slow growth rate; matches Krakauer 2010 exponential approach)
-      - t_max=24     (6 months ≈ clinical plateau; Duncan 2000, EXCITE trial)
-
-    Recovery milestones (without NIBS):
-      Week  4:   ~15% recovery (still acute)
-      Week  8:   ~40% recovery (subacute)
-      Week 12:   ~65% recovery (early plateau)
-      Week 16:   ~85% recovery
-      Week 24:   ~95% recovery (chronic plateau)
-    """
-    r = 1.0 / (1.0 + np.exp(-k * (weeks - t0)))
-    r_all = 1.0 / (1.0 + np.exp(-k * (np.arange(t_max+1) - t0)))
-    r = (r - r_all[0]) / np.clip(r_all[-1] - r_all[0], 1e-6, None)
+    """Baseline (no-NIBS) descending-drive recovery — the stroke reference."""
+    r = natural_fraction(weeks, k, t0, t_max)
     return np.clip(c_stroke + r * (c_healthy - c_stroke), c_stroke, c_healthy)
 
 
+def _tms_bump(wk):
+    """
+    TMS recovery-rate boost — a SUBACUTE window effect (cortical excitability
+    / use-dependent plasticity).  Gaussian peaking ~week 5, tapering by ~14 wk
+    (Hummel & Cohen 2005: strongest in the acute/subacute phase).
+    """
+    return float(np.exp(-((wk - 5.0) / 5.0) ** 2))
+
+
+def _scs_engagement(weeks_since_start):
+    """
+    SCS plasticity build-up — saturating ramp from stimulation onset
+    (Wagner 2018: epidural stim effects accumulate over weeks, then plateau).
+    """
+    if weeks_since_start <= 0:
+        return 0.0
+    return float(1.0 - np.exp(-weeks_since_start / 6.0))
+
+
 def run_protocol_at_week(proto_spec, wk):
-    """Run a single protocol simulation at a given week (24-week timeline)."""
-    c_L = recovery_c_L(np.array([wk]), c_stroke, c_healthy)[0]
+    """
+    Per-protocol drive trajectory + recruitment-threshold modulation.
+
+    Two DISTINCT biophysical mechanisms (this is what separates the arms):
+      • TMS  → accelerates the recovery RATE (adds to the recovery fraction,
+               front-loaded in the subacute window via `_tms_bump`).
+      • SCS  → (a) lowers the affected-side motoneuron recruitment THRESHOLD
+               C_CRIT (flaccid limb fires at lower drive → early force return),
+               and (b) adds a late-building recovery-fraction boost.
+      • Combined adds a super-additive `synergy` term; Sequential delays SCS.
+    """
+    # Natural recovery fraction (shared baseline)
+    r = float(natural_fraction(np.array([wk]))[0])
+
+    # TMS: subacute acceleration of the recovery rate
+    dr_tms = 0.0
+    if proto_spec.get("tms"):
+        dr_tms = proto_spec.get("tms_gain", 0.0) * _tms_bump(wk)
+
+    # SCS: plasticity build-up + threshold drop (engaged from scs_start)
+    scs_eng = 0.0
+    if proto_spec.get("scs") and wk >= proto_spec.get("scs_start", 0):
+        scs_eng = _scs_engagement(wk - proto_spec.get("scs_start", 0))
+    dr_scs = proto_spec.get("scs_gain", 0.0) * scs_eng
+
+    # Super-additive synergy when BOTH modalities are active
+    dr_syn = proto_spec.get("synergy", 0.0) * (1.0 if dr_tms > 0 else 0.0) * scs_eng
+
+    r_eff = float(np.clip(r + dr_tms + dr_scs + dr_syn, 0.0, 1.0))
+    c_L = c_stroke + r_eff * (c_healthy - c_stroke)
     c_R_val = c_R
 
-    # TMS boost: clinical protocol 5×/week × 6 weeks acute phase (Hummel/Cohen 2005)
-    # Tapers over 12 weeks total
-    tms_boost = 0.0
-    if proto_spec["tms"]:
-        tms_boost = 0.05 * max(0, 1.0 - wk / 12.0)
+    # SCS lowers the affected-side recruitment threshold (spinal facilitation)
+    crit_L = p2.C_CRIT - proto_spec.get("scs_crit_drop", 0.0) * scs_eng
 
-    # SCS amplitude: ramps over 4 weeks, then maintained (clinical SCS titration)
-    # Effects accumulate over 12-16 weeks (Wagner 2018 epidural stim)
-    scs_amp = 0.0
-    if proto_spec["scs"] and wk >= proto_spec["scs_start"]:
-        weeks_since_scs = wk - proto_spec["scs_start"]
-        scs_amp = 0.15 * min(1.0, weeks_since_scs / 4.0)  # 4-week ramp
-        scs_amp = np.clip(scs_amp, 0, 0.20)
+    # Residual sinusoidal SCS drive = the actual stimulation rhythm
+    scs_amp = 0.15 * scs_eng
 
-    c_L_stim = np.clip(c_L + tms_boost, c_stroke, c_healthy)
-    c_R_stim = np.clip(c_R_val, c_stroke, c_healthy)
+    c_L_stim = float(np.clip(c_L, c_stroke, c_healthy))
+    c_R_stim = float(np.clip(c_R_val, c_stroke, c_healthy))
 
     return p2.simulate(c_L_stim, c_R_stim,
                        scs_amp_L=scs_amp*0.1, scs_freq_L=20.0,
                        scs_amp_R=scs_amp*0.1, scs_freq_R=20.0,
+                       c_crit_L=crit_L,
                        sim_s=20.0)
 
 
@@ -178,16 +218,23 @@ def make_unified_comparison_figure():
     COLOR_C = "#f39c12"           # Combined - orange
     COLOR_D = "#9b59b6"           # Sequential - purple
 
+    # Per-protocol mechanism strengths (see run_protocol_at_week):
+    #   tms_gain      — subacute recovery-rate boost (cortical)
+    #   scs_gain      — late recovery-fraction boost (spinal plasticity)
+    #   scs_crit_drop — reduction of recruitment threshold C_CRIT (spinal)
+    #   synergy       — super-additive bonus when both modalities engaged
     protocols = {
-        "A: TMS only": {"tms": True, "scs": False, "scs_start": 999, "color": COLOR_A},
-        "B: SCS only": {"tms": False, "scs": True, "scs_start": 0, "color": COLOR_B},
-        "C: Combined": {"tms": True, "scs": True, "scs_start": 0, "color": COLOR_C},
-        "D: Sequential": {"tms": True, "scs": True, "scs_start": 6, "color": COLOR_D},
+        "A: TMS only":   {"tms": True,  "scs": False, "scs_start": 999,
+                          "tms_gain": 0.16, "color": COLOR_A},
+        "B: SCS only":   {"tms": False, "scs": True,  "scs_start": 0,
+                          "scs_gain": 0.18, "scs_crit_drop": 0.14, "color": COLOR_B},
+        "C: Combined":   {"tms": True,  "scs": True,  "scs_start": 0,
+                          "tms_gain": 0.16, "scs_gain": 0.18, "scs_crit_drop": 0.14,
+                          "synergy": 0.10, "color": COLOR_C},
+        "D: Sequential": {"tms": True,  "scs": True,  "scs_start": 6,
+                          "tms_gain": 0.16, "scs_gain": 0.18, "scs_crit_drop": 0.14,
+                          "synergy": 0.06, "color": COLOR_D},
     }
-
-    # Clinical evaluation timepoints
-    EVAL_WEEK = 16.0  # Late subacute (~4 months) — typical clinical evaluation
-    MAX_WEEK = 24     # 6 months (clinical plateau / chronic phase)
 
     print("\n[Sim 1/6] Stroke baseline (week 0)...")
     res_stroke = run_protocol_at_week({"tms": False, "scs": False, "scs_start": 999}, 0.0)
@@ -242,7 +289,7 @@ def make_unified_comparison_figure():
 
     # ═══ ROW 0: LEFT MUSCLE FORCE OVERLAY (Panel A) ════════════════════════════
     ax_LF = mk_ax(0, 0, cs=2)
-    ax_LF.set_title("LEFT Extensor Muscle Force — Recovery Pattern Overlay (Week 16 ≈ 4 mo)",
+    ax_LF.set_title(f"LEFT Extensor Muscle Force — Recovery Pattern Overlay ({eval_label})",
                    fontsize=11, color=LIGHT, fontweight="bold", pad=8)
     add_index(ax_LF, "A")
 
@@ -298,7 +345,7 @@ def make_unified_comparison_figure():
 
     # ═══ ROW 1: RIGHT MUSCLE FORCE OVERLAY (Panel C) ═══════════════════════════
     ax_RF = mk_ax(1, 0, cs=2)
-    ax_RF.set_title("RIGHT Extensor Muscle Force — Recovery Pattern Overlay (Week 16 ≈ 4 mo)",
+    ax_RF.set_title(f"RIGHT Extensor Muscle Force — Recovery Pattern Overlay ({eval_label})",
                    fontsize=11, color=LIGHT, fontweight="bold", pad=8)
     add_index(ax_RF, "C")
 
@@ -409,7 +456,7 @@ def make_unified_comparison_figure():
     # ═══ ROW 2: SUMMARY METRICS TABLE (Panel F) ═════════════════════════════════
     ax_tab = mk_ax(2, 2)
     ax_tab.axis("off")
-    ax_tab.set_title("Summary Metrics @ Week 5", fontsize=10,
+    ax_tab.set_title(f"Summary Metrics @ Week {int(EVAL_WEEK)}", fontsize=10,
                     color=LIGHT, fontweight="bold", pad=4)
     add_index(ax_tab, "F")
 
@@ -461,7 +508,7 @@ def main():
     proto_metrics, m_stroke, m_healthy = make_unified_comparison_figure()
 
     print(f"\n{'='*85}")
-    print(f"  FINAL COMPARISON @ Week 5 (Stroke wk0 = {abs(m_stroke['ai'])*100:.1f}%, "
+    print(f"  FINAL COMPARISON @ Week {int(EVAL_WEEK)} (Stroke wk0 = {abs(m_stroke['ai'])*100:.1f}%, "
           f"Healthy = {abs(m_healthy['ai'])*100:.1f}%)")
     print(f"{'='*85}")
     for proto_name, m in proto_metrics.items():
