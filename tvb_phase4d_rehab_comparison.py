@@ -46,7 +46,19 @@ spec.loader.exec_module(p2)
 
 scales = p2.load_phase1_scales()
 C0 = p2.C0
-c_stroke = C0 * scales["scale_L"]
+
+# ── Acute stroke severity (Phase 2B) ──────────────────────────────────────
+# The recovery trajectory now STARTS from a clinically realistic acute deficit.
+# Acute hemiparesis is more severe than the chronic CST drop (spinal shock,
+# diaschisis, peri-lesional oedema): below the motoneuron-recruitment threshold
+# the affected limb is FLACCID (force ≈ 0).  Recovery raises the descending
+# drive back UP THROUGH the recruitment threshold, so force visibly returns
+# part-way through rehabilitation.
+#   "severe"   → c≈0.45, ~23% recruitable force at onset (near-flaccid)
+#   "complete" → c≈0.30, ~5%  (fully flaccid)
+#   "mild"     → c≈0.97, original Phase-1 TVB deficit (no flaccidity)
+ACUTE_SEVERITY = "severe"
+c_stroke = C0 * p2.STROKE_SEVERITY[ACUTE_SEVERITY]
 c_healthy = C0
 c_R = C0 * scales["scale_R"]
 
@@ -219,8 +231,9 @@ def make_unified_comparison_figure():
 
     # Suptitle replaces the removed pipeline row
     fig.suptitle(
-        "Phase 4D Step 2: Multi-Protocol Rehabilitation Overlay Comparison\n"
-        f"Stroke (week 0): c_L={c_stroke:.3f}, AmpAI={m_stroke['ai']*100:.1f}%  →  "
+        "Phase 4D: Multi-Protocol Rehabilitation Comparison\n"
+        f"Acute stroke ({ACUTE_SEVERITY}, week 0): c_L={c_stroke:.3f}, "
+        f"F_L={m_stroke['amp_L']:.1f} N (flaccid), AmpAI={m_stroke['ai']*100:.1f}%  →  "
         f"Healthy: c_L={c_healthy:.3f}, AmpAI={m_healthy['ai']*100:.1f}%",
         fontsize=13, fontweight="bold", color=ACCENT, y=0.985)
 
