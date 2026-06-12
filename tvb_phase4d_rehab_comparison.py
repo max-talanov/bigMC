@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-TVB Phase 4D Step 2 — UNIFIED OVERLAY COMPARISON
-==================================================
+TVB Phase 4D — Rehabilitation Protocol Comparison (canonical)
+=============================================================
 
-Creates a SINGLE comprehensive figure overlaying ALL FOUR protocols
-in Phase 2 style:
+The single, canonical Phase 4D deliverable (consolidated from the earlier
+step2 drafts now in archive/).  Produces one comprehensive A–F figure
+overlaying all four rehabilitation protocols over a clinical 24-week timeline:
 
-  - LEFT Extensor Muscle Force: Stroke baseline vs Healthy vs A/B/C/D outcomes
-  - RIGHT Extensor Muscle Force: Same overlay
-  - L/R Asymmetry Evolution: All protocols on one plot
-  - CPG Oscillator Activity: Side-by-side comparison
-  - Summary Metrics: Direct comparison table
+  A. LEFT Extensor Muscle Force: Stroke baseline vs Healthy vs A/B/C/D
+  B. CPG Oscillator activity
+  C. RIGHT Extensor Muscle Force overlay
+  D. Step frequency
+  E. L/R Amplitude-Asymmetry evolution (0–24 weeks)
+  F. Summary metrics table
 
-Run with:  python3 tvb_phase4d_step2_overlay.py
+Uses the canonical `tvb_phase2_spinal_cpg.py::simulate()` for all CPG/force
+generation, so it inherits the motoneuron-recruitment / flaccid-stroke model
+(Phase 2B) and the optional epidural-SCS drive automatically.
+
+Run with:  python3 tvb_phase4d_rehab_comparison.py
 """
 
 import numpy as np
@@ -45,103 +51,10 @@ c_healthy = C0
 c_R = C0 * scales["scale_R"]
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CPG SIMULATOR
+#  CPG SIMULATOR — uses the canonical p2.simulate() (Phase 2), which now
+#  carries the motoneuron-recruitment / flaccid-stroke model AND optional
+#  epidural-SCS sinusoidal drive.  No local re-implementation.
 # ══════════════════════════════════════════════════════════════════════════════
-
-def simulate_cpg(c_L: float, c_R: float,
-                 scs_amp_L: float = 0.0, scs_freq_L: float = 20.0,
-                 scs_amp_R: float = 0.0, scs_freq_R: float = 20.0,
-                 sim_s: float = 20.0, dt_s: float = 0.001) -> dict:
-    """
-    Matsuoka CPG using PHASE 2 SIMULATOR with SCS extension.
-
-    Inherits saturating muscle dynamics from Phase 2 (bounded force output)
-    and adds epidural SCS sinusoidal modulation to tonic drives.
-    """
-    # Inherit Phase 2 constants
-    W_MAT = p2.W_MAT
-    BETA = p2.BETA
-    TAU1 = p2.TAU1
-    TAU2 = p2.TAU2
-    L0 = p2.L0
-    ACT_GAIN = p2.ACT_GAIN
-    ACT_MAX = p2.ACT_MAX
-    FORCE_MAX = p2.FORCE_MAX
-    FORCE_SAT_K = p2.FORCE_SAT_K
-    TAU_ACT_MS = p2.TAU_ACT_MS
-    TAU_FORCE_RISE = p2.TAU_FORCE_RISE
-    TAU_FORCE_FALL = p2.TAU_FORCE_FALL
-    TAU_LENGTH_MS = p2.TAU_LENGTH_MS
-    L_MIN = p2.L_MIN
-    L_MAX = p2.L_MAX
-    SHORTEN_GAIN = p2.SHORTEN_GAIN
-    clamp = p2.clamp
-
-    N = int(sim_s / dt_s)
-
-    tau1 = np.array([TAU1*(C0/c_L), TAU1*(C0/c_L),
-                     TAU1*(C0/c_R), TAU1*(C0/c_R)])
-    tau2 = np.array([TAU2*(C0/c_L), TAU2*(C0/c_L),
-                     TAU2*(C0/c_R), TAU2*(C0/c_R)])
-
-    u = np.array([0.80, -0.50, -0.50, 0.80])
-    v = np.array([0.10, 0.0, 0.0, 0.10])
-    y = np.maximum(0.0, u)
-
-    act = np.zeros(4)
-    force = np.zeros(4)
-    leng = np.full(4, L0)
-
-    t_arr = np.zeros(N)
-    y_arr = np.zeros((4, N))
-    f_arr = np.zeros((4, N))
-
-    tA = TAU_ACT_MS / 1000.0
-    tFR = TAU_FORCE_RISE / 1000.0
-    tFF = TAU_FORCE_FALL / 1000.0
-    tL = TAU_LENGTH_MS / 1000.0
-
-    for k in range(N):
-        t = k * dt_s
-
-        # SCS sinusoidal modulation (epidural input)
-        scs_L = scs_amp_L * np.sin(2*np.pi * scs_freq_L * t)
-        scs_R = scs_amp_R * np.sin(2*np.pi * scs_freq_R * t)
-        c_total = np.array([c_L + scs_L, c_L + scs_L,
-                           c_R + scs_R, c_R + scs_R])
-
-        # ── Matsuoka ODE (Phase 2 formulation, no commissural) ────────────
-        du = (-u - W_MAT @ y - BETA * v + c_total) / tau1
-        dv = (-v + y) / tau2
-        u = u + dt_s * du
-        v = v + dt_s * dv
-        y = np.maximum(0.0, u)
-
-        # ── Phase 2 muscle proxy (SATURATING - bounds force) ──────────────
-        r = y * 100.0
-        for i in range(4):
-            act_tgt = clamp(ACT_GAIN * r[i] / 100.0, 0, ACT_MAX)
-            act[i] += (dt_s / tA) * (act_tgt - act[i])
-
-            f_tgt = FORCE_MAX * (1.0 - np.exp(-FORCE_SAT_K * act[i]))
-            tau_f = tFR if f_tgt > force[i] else tFF
-            force[i] += (dt_s / tau_f) * (f_tgt - force[i])
-            force[i] = clamp(force[i], 0, FORCE_MAX)
-
-            leng[i] += (dt_s / tL) * (L0 - leng[i])
-            leng[i] -= SHORTEN_GAIN * force[i] * dt_s
-            leng[i] = clamp(leng[i], L_MIN, L_MAX)
-
-        t_arr[k] = t
-        y_arr[:, k] = y
-        f_arr[:, k] = force
-
-    return {
-        "time_s": t_arr,
-        "y": y_arr,
-        "force_LE": f_arr[0], "force_LF": f_arr[1],
-        "force_RE": f_arr[2], "force_RF": f_arr[3],
-    }
 
 
 def recovery_c_L(weeks, c_stroke, c_healthy, k=0.18, t0=10.0, t_max=24):
@@ -188,7 +101,7 @@ def run_protocol_at_week(proto_spec, wk):
     c_L_stim = np.clip(c_L + tms_boost, c_stroke, c_healthy)
     c_R_stim = np.clip(c_R_val, c_stroke, c_healthy)
 
-    return simulate_cpg(c_L_stim, c_R_stim,
+    return p2.simulate(c_L_stim, c_R_stim,
                        scs_amp_L=scs_amp*0.1, scs_freq_L=20.0,
                        scs_amp_R=scs_amp*0.1, scs_freq_R=20.0,
                        sim_s=20.0)
@@ -269,7 +182,7 @@ def make_unified_comparison_figure():
     m_stroke = extract_metrics(res_stroke)
 
     print("[Sim 2/6] Healthy reference...")
-    res_healthy = simulate_cpg(c_healthy, c_R, sim_s=20.0)
+    res_healthy = p2.simulate(c_healthy, c_R, sim_s=20.0)
     m_healthy = extract_metrics(res_healthy)
 
     proto_results = {}

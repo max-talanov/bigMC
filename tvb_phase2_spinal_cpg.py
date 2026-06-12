@@ -199,7 +199,9 @@ def clamp(x, lo, hi):
 
 def simulate(c_L: float, c_R: float,
              sim_s: float = 20.0, dt_s: float = 0.001,
-             recruit: bool = RECRUIT_ON) -> dict:
+             recruit: bool = RECRUIT_ON,
+             scs_amp_L: float = 0.0, scs_freq_L: float = 20.0,
+             scs_amp_R: float = 0.0, scs_freq_R: float = 20.0) -> dict:
     """
     Run the bilateral Matsuoka CPG + muscle proxies.
 
@@ -210,6 +212,10 @@ def simulate(c_L: float, c_R: float,
     dt_s     : integration step [s]
     recruit  : if True, apply the motoneuron-pool recruitment gain so that
                low descending drive yields flaccid (≈0) force on that side.
+    scs_amp_*, scs_freq_* : optional epidural spinal-cord-stimulation (SCS)
+               sinusoidal drive added to each side's tonic input,
+               c_side(t) += scs_amp · sin(2π · scs_freq · t).  Zero amplitude
+               (default) reproduces the plain cortical-drive model.
 
     Returns
     -------
@@ -270,11 +276,21 @@ def simulate(c_L: float, c_R: float,
         gL = gR = 1.0
     rec_gain = np.array([gL, gL, gR, gR])
 
+    scs_on = (scs_amp_L != 0.0) or (scs_amp_R != 0.0)
+
     for k in range(N):
         t = k * dt_s
 
+        # ── Drive (+ optional epidural SCS sinusoidal modulation) ────────
+        if scs_on:
+            sL = scs_amp_L * np.sin(2 * np.pi * scs_freq_L * t)
+            sR = scs_amp_R * np.sin(2 * np.pi * scs_freq_R * t)
+            c_t = c + np.array([sL, sL, sR, sR])
+        else:
+            c_t = c
+
         # ── Matsuoka ODE (Euler, per-neuron τ) ───────────────────────────
-        du = (-u - W_MAT @ y - BETA * v + c) / tau1
+        du = (-u - W_MAT @ y - BETA * v + c_t) / tau1
         dv = (-v + y) / tau2
         u  = u + dt_s * du
         v  = v + dt_s * dv
