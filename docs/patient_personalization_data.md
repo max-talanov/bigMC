@@ -105,6 +105,90 @@ imaging-light personalization path.
 
 ---
 
+## Who provides each data type (IRCCS neurorehabilitation hospital)
+
+CST is the *structure*; **DTI-FA** measures its structural integrity and
+**TMS-MEP** its functional integrity — request both, they can disagree
+(structurally thinned but still conducting, or vice versa), and the
+disagreement is itself informative.
+
+| Data type | One-line description | Model use | Unit (IT name) | Who runs it |
+|---|---|---|---|---|
+| **CST** | Main motor pathway, cortex→cord; top recovery predictor | sets `c_L` / severity | — (measured via DTI or TMS) | — |
+| **DTI-FA** | MRI sequence; FA(0–1) of the CST, lesioned-vs-intact **asymmetry ratio** | continuous → `c_L`, severity | Neuroradiology (*UOC Neuroradiologia*) | MRI techs acquire; tractography/FA by neuroradiologist or **imaging-research / MRI physicist / bioengineer** |
+| **TMS-MEP** | Magnetic pulse over M1; EMG twitch = **MEP± / amplitude / RMT** | MEP− ⇒ flaccid; amp+RMT → `c_L`, NIBS dose | Clinical Neurophysiology (*Neurofisiopatologia*) | neurophysiologist / neurologist (TMS-EMG) |
+| **Lesion mask** | Dead-tissue outline on T1/FLAIR/DWI | regions silenced, `STROKE_FRACTION` | Neuroradiologia | neuroradiologist |
+| **PWI** | Perfusion map; DWI–PWI mismatch = penumbra | core-vs-penumbra split | Neuroradiologia | neuroradiologist (research MRI) |
+| **rs-fMRI** | Resting co-activation; interhemispheric M1 FC | diaschisis / FC targets | Neuroradiologia (research MRI) | imaging-research team |
+| **sEMG** | Surface muscle activity, affected vs unaffected | validates motoneuron output | Neurofisiopatologia / gait lab | neurophysiology tech / bioengineer |
+| **Dynamometry / force plates / 3D gait** | Measured force & gait asymmetry | = our **AmpAI**, `FORCE_MAX` | Movement-analysis lab (*Laboratorio di Analisi del Movimento*) | bioengineers / movement scientists |
+| **Fugl-Meyer / MRC / NIHSS / gait speed** | Clinical motor / strength / severity scores | severity bin, recovery anchor | Physiatry & Neurology (*Medicina Fisica e Riabilitazione, Neurologia*) | physiatrists / physiotherapists |
+
+**Three units to approach:**
+1. **Neuroradiology research group** → DTI-FA tractography, lesion mask, PWI, rs-fMRI (one MRI session yields most imaging).
+2. **Clinical Neurophysiology (TMS lab)** → MEP±, RMT (also your future NIBS/tDCS partner).
+3. **Movement-analysis lab + physiatry** → force/gait/AmpAI and clinical scores (Fugl-Meyer).
+
+> Note: DTI-FA tractography and rs-FC are usually **research-grade processing**,
+> not routine clinical reports — collaborate with the imaging *research* team
+> for those two, not the standard radiology service.
+
+---
+
+## Data request templates
+
+Short notes to send each unit. Replace **[patient/cohort]** and contact details.
+
+### EN — Neuroradiology
+> We are building a patient-specific computational model of post-stroke motor
+> recovery. For **[patient/cohort]** we would need, from a single MRI session:
+> (1) a **lesion mask** (T1/FLAIR or DWI); (2) **DTI** with **CST tractography**
+> and the **fractional-anisotropy (FA) asymmetry ratio** (affected vs unaffected
+> hemisphere); and, if feasible, (3) **resting-state fMRI** for interhemispheric
+> M1 connectivity and (4) **perfusion (PWI)** for the penumbra. We are happy to
+> collaborate on the tractography/FC processing. Output as NIfTI + a short table
+> of FA values.
+
+### EN — Clinical Neurophysiology (TMS)
+> For the same model we need **TMS motor-evoked potentials** of the affected
+> lower limb: **MEP presence/absence (MEP±)**, **MEP amplitude**, and **resting
+> motor threshold (RMT)**, ideally bilaterally. These set the descending-drive
+> parameter and, later, the NIBS dosing. A short table per session is sufficient.
+
+### EN — Movement-analysis lab & Physiatry
+> We need the patient's **motor output**: **peak force / dynamometry** and/or
+> **instrumented gait** (step frequency, ground reaction forces, left–right
+> **force-asymmetry index**) plus **surface EMG** of leg flexors/extensors; and
+> the clinical scores **Fugl-Meyer (lower limb)**, **MRC strength**, and **gait
+> speed (10 m)**. These calibrate and validate the force model.
+
+### IT — Neuroradiologia
+> Stiamo sviluppando un modello computazionale paziente-specifico del recupero
+> motorio post-ictus. Per **[paziente/coorte]** servirebbero, da una singola
+> sessione RM: (1) una **maschera della lesione** (T1/FLAIR o DWI); (2) **DTI**
+> con **trattografia del tratto corticospinale (CST)** e il **rapporto di
+> asimmetria della frazione di anisotropia (FA)** (emisfero affetto vs sano);
+> e, se possibile, (3) **fMRI a riposo** per la connettività interemisferica di
+> M1 e (4) **perfusione (PWI)** per la penombra. Disponibili a collaborare sul
+> processing di trattografia/connettività. Output in NIfTI + tabella dei valori FA.
+
+### IT — Neurofisiopatologia (TMS)
+> Per lo stesso modello servono i **potenziali evocati motori (MEP) da TMS**
+> dell'arto inferiore affetto: **presenza/assenza del MEP (MEP±)**, **ampiezza
+> del MEP** e **soglia motoria a riposo (RMT)**, idealmente bilaterali.
+> Definiscono il parametro di drive discendente e, in seguito, il dosaggio NIBS.
+> È sufficiente una breve tabella per sessione.
+
+### IT — Laboratorio di Analisi del Movimento & Fisiatria
+> Servono i dati di **output motorio**: **forza di picco / dinamometria** e/o
+> **analisi strumentale del cammino** (cadenza, forze di reazione al suolo,
+> **indice di asimmetria della forza** destra–sinistra), più **EMG di superficie**
+> dei flessori/estensori dell'arto inferiore; e i punteggi clinici **Fugl-Meyer
+> (arto inferiore)**, **forza MRC** e **velocità del cammino (10 m)**. Servono a
+> calibrare e validare il modello di forza.
+
+---
+
 ## References
 
 - Stinear (2007) *Brain* 130:170 — CST integrity & motor potential
